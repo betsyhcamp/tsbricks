@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tsbricks"
+version = "0.1.0"
+description = ""
+authors = [
+    { name = "Elizabeth H. Camp", email = "betsy.h.camp@gmail.com" }
+]
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "pytest",
+    "pre-commit",
+    "jupytext",
+    "mdformat",
+    "mdformat-gfm",
+    "sphinx",
+    "furo",
+    "sphinx-autodoc-typehints",
+    "myst-parser",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tsbricks"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+extend-exclude = ["*.md", ".venv"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,25 @@
+# Data files
+*.csv
+*.parquet
+*.xlsx
+
+# IPython notebook checkpoints
+.ipynb_checkpoints/
+
+# Python
+*.pyc
+__pycache__/
+.venv/
+dist/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Environment
+.env
+
+# VS Code
+.vscode/settings.json
+
+# Documentation build
+docs/_build/

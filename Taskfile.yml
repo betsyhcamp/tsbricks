@@ -1,0 +1,95 @@
+version: '3'
+
+tasks:
+  # ===========================================
+  # DEPENDENCIES
+  # ===========================================
+  install:
+    desc: Install dependencies
+    cmds:
+      - uv sync
+
+  # ===========================================
+  # FILE UTILITIES (delegates to pre-commit)
+  # ===========================================
+  pre-commit:
+    desc: Run pre-commit hooks on all files
+    cmds:
+      - uv run pre-commit run --all-files
+
+  # ===========================================
+  # PROJECT CHECKS (single source of truth)
+  # ===========================================
+  lint:
+    desc: Run ruff linter
+    cmds:
+      - uv run ruff check .
+
+  lint-fix:
+    desc: Run ruff linter with auto-fix
+    cmds:
+      - uv run ruff check --fix .
+
+  format:
+    desc: Format code with ruff
+    cmds:
+      - uv run ruff format .
+
+  format-check:
+    desc: Check code formatting with ruff
+    cmds:
+      - uv run ruff format --check .
+
+  md-format:
+    desc: Format Markdown files with mdformat
+    cmds:
+      - find . -name '*.md' -not -path './.venv*/*' -exec uv run mdformat --wrap keep {} +
+
+  md-check:
+    desc: Check Markdown formatting with mdformat
+    cmds:
+      - find . -name '*.md' -not -path './.venv*/*' -exec uv run mdformat --wrap keep --check {} +
+
+  test:
+    desc: Run tests
+    cmds:
+      - uv run pytest
+
+  # ===========================================
+  # COMPOSITE TASKS
+  # ===========================================
+
+  check:
+    desc: Run all CI checks
+    cmds:
+      - task: pre-commit
+      - task: test
+      - task: docs
+      - task: build
+
+
+
+  # ===========================================
+  # DOCUMENTATION
+  # ===========================================
+  docs:
+    desc: Build HTML documentation locally
+    cmds:
+      - uv run sphinx-build -b html docs docs/_build/html
+
+  docs-clean:
+    desc: Remove built documentation
+    cmds:
+      - rm -rf docs/_build
+
+
+
+  # ===========================================
+  # PACKAGE BUILD
+  # ===========================================
+  build:
+    desc: Build the package
+    cmds:
+      - uv build
+
+
