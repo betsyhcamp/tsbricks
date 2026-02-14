@@ -20,7 +20,7 @@ tsbricks/
 │   ├── metrics/          # Built-in metric callables (MAE, RMSE, RMSSE, MAPE, scaled bias, WAPE, WRMSSE)
 │   │   ├── __init__.py
 │   │   └── ...
-│   ├── transforms/       # Built-in transform classes (BoxCox, ZScore, Log, Log1p, Power, AddConstant, TradingDayNorm)
+│   ├── transforms/       # BaseTransform base class + built-in transforms (BoxCox, StandardScaler, Log, Log1p, Power, AddConstant, TradingDayNorm)
 │   │   ├── __init__.py
 │   │   └── ...
 │   ├── diagnostics/      # Model fit diagnostics (ACF, PACF)
@@ -51,7 +51,7 @@ tsbricks/
 
 The package is organized into three top-level namespaces that reflect a layered architectural distinction:
 
-**`tsbricks.blocks`** contains stateless building blocks — metric callables, transform objects, diagnostic functions, data I/O utilities, and shared helpers. These components follow well-defined interfaces (the metric callable signature, the four-method transform interface) and have no dependency on the runner's orchestration logic or the backtesting system's configuration model or output structures.
+**`tsbricks.blocks`** contains stateless building blocks — metric callables, transform objects (all extending `BaseTransform`), diagnostic functions, data I/O utilities, and shared helpers. These components follow well-defined interfaces (the metric callable signature, the four-method transform interface defined by `BaseTransform`) and have no dependency on the runner's orchestration logic or the backtesting system's configuration model or output structures.
 
 **`tsbricks.runner`** contains shared orchestration primitives — transform chain execution (fit, transform, inverse transform), model callable invocation and return tuple unpacking, and model serialization. These primitives are consumed by `backtesting/` and will be consumed by a future `forecasting/` module. They depend on `blocks/` (e.g., transform objects) but have no dependency on backtest-specific or forecast-specific logic such as fold generation, metric evaluation, or result dataclasses.
 
@@ -92,7 +92,7 @@ These checks should be added to the CI pipeline alongside linting and type check
 
 The backtesting system, runner, and blocks modules are shipped as a single package rather than separate packages. This decision was evaluated at design time and is based on the following factors:
 
-**The built-in implementations are part of the backtesting system's value proposition.** The spec ships built-in metrics (MAE, RMSE, MAPE, RMSSE, scaled bias) and built-in transforms (BoxCox, ZScore, NaturalLog, Log1p, Power, AddConstant, TradingDayNorm). These are designed to work with the backtesting system's callable contracts. Splitting them into a separate package would create user confusion about which package provides what.
+**The built-in implementations are part of the backtesting system's value proposition.** The spec ships built-in metrics (MAE, RMSE, MAPE, RMSSE, scaled bias) and built-in transforms (BoxCox, StandardScaler, NaturalLog, Log1p, Power, AddConstant, TradingDayNorm), all extending a `BaseTransform` base class. These are designed to work with the backtesting system's callable contracts. Splitting them into a separate package would create user confusion about which package provides what.
 
 **The interfaces have not stabilized.** V1 is the first release. The transform interface, metric callable signatures, and the boundaries between blocks, runner, and backtesting will evolve as features like `per_group` transform scope, sliding window CV, the model adapter pattern, `run_forecast`, and native Optuna integration are added. Co-locating the code allows these interfaces to evolve in lockstep with single-PR refactors and single version bumps.
 
@@ -184,8 +184,9 @@ from tsbricks.runner import (
 
 ```python
 from tsbricks.blocks.transforms import (
+    BaseTransform,          # Abstract base class for all transforms
     BoxCoxTransform,
-    ZScoreTransform,
+    StandardScaler,
     NaturalLogTransform,
     Log1pTransform,
     PowerTransform,
@@ -250,3 +251,47 @@ serialization:
 ```
 
 The dynamic import mechanism in `tsbricks.runner` resolves any valid Python import path. Built-in and user-provided callables are treated identically at runtime.
+
+______________________________________________________________________
+
+## 7. V1 Configuration Notes
+
+The following config sections are **not present in V1**:
+
+- **`artifact_storage.output_path`** — Removed. The system returns structured results as a Python dataclass; the user controls where and how artifacts are persisted.
+- **`experiment_tracking`** — Removed. The user controls logging to Vertex AI Experiments directly using the Vertex AI SDK. A future version may add an experiment tracking abstraction.
+
+The following config fields are **new in V1**:
+
+- **`data.freq`** — Required. Explicit pandas frequency string (e.g., `"MS"`, `"D"`, `"W"`). The system does not infer frequency from the data due to the unreliability of `pd.infer_freq()`.
+
+______________________________________________________________________
+
+## 8. Transform Architecture
+
+### 8.1 BaseTransform
+
+All built-in transforms extend `BaseTransform`, an abstract base class in `tsbricks.blocks.transforms`. It defines:
+
+- The four-method interface: `fit_transform(df, target_col, **params)`, `transform(df, target_col)`, `inverse_transform(df, target_col)`, `get_fitted_params()`.
+- A `_map_per_series(df, target_col, fn)` helper that isolates per-series iteration into a single swappable location, enabling future acceleration (multiprocessing, Polars `group_by.map_groups`).
+
+User-provided transforms should extend `BaseTransform` but this is not enforced at runtime.
+
+### 8.2 DataFrame-Based Interface
+
+Transform methods accept DataFrames with at least `ds`, `unique_id`, and the target column. The column name is passed explicitly via `target_col`. Each call operates on one column at a time. This design:
+
+- Simplifies global scope (pass the full panel DataFrame — no concatenation/splitting needed).
+- Provides a clean migration path to native Polars support in V2 (narwhals or similar).
+- Keeps the interface uniform across `per_series` and `global` scopes.
+
+### 8.3 V1 Implementation Patterns
+
+The following patterns are required in V1 to enable future acceleration:
+
+1. Never mutate input DataFrames — always `df.copy()`.
+2. Store fitted parameters as plain Python types (`float`, `int`, `str`), not numpy scalars.
+3. No DataFrame index dependency — column-based operations only.
+4. Isolate per-series iteration into `_map_per_series`.
+5. `StandardScaler` is a custom implementation (not wrapping sklearn or coreforecast) to keep dependencies minimal and maintain full control over the per-series iteration pattern.
