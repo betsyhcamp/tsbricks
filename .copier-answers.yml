@@ -8,4 +8,3 @@ package_name: tsbricks
 project_name: tsbricks
 project_type: package
 python_version: 3.11.11
-
