@@ -533,6 +533,20 @@ The system ships with built-in transform classes for common operations. All buil
     upper_bound: 2
 ```
 
+### 6.9 V1 Future-Proofing Patterns
+
+The following implementation patterns are required in V1 to enable future acceleration (multiprocessing, Polars native support) without API-breaking changes:
+
+1. **Never mutate input DataFrames.** All transform methods must operate on `df.copy()` and return new DataFrames. This ensures correctness under future parallel execution and prevents subtle bugs from shared mutable state.
+
+2. **Store fitted parameters as plain Python types.** `get_fitted_params()` must return `float`, `int`, `str` — not `numpy.float64` or other numpy scalars. This ensures serialization compatibility and avoids type-related surprises in downstream consumers.
+
+3. **No DataFrame index dependency.** All operations must be column-based, never relying on the DataFrame's index. This eliminates a class of bugs when DataFrames are sliced, concatenated, or converted between pandas and Polars (which has no index concept).
+
+4. **Isolate per-series iteration into `_map_per_series`.** `BaseTransform` provides a `_map_per_series(df, target_col, fn)` helper that groups by `unique_id`, applies `fn` to each group, and reassembles the result. All per-series transforms use this single entry point for iteration. This allows future acceleration (e.g., swapping the loop for `joblib.Parallel` or a Polars `group_by.map_groups`) by changing one method.
+
+5. **`BaseTransform` base class.** All built-in transforms extend `BaseTransform`, which defines the four-method interface as abstract methods and provides `_map_per_series`. User-provided transforms should also extend `BaseTransform` but this is not enforced at runtime.
+
 ______________________________________________________________________
 
 ## 7. Model Interface
@@ -549,6 +563,8 @@ def my_model(train_df: pd.DataFrame, horizon: int, **kwargs) -> pd.DataFrame:
                   optionally exogenous columns).
         horizon: Number of periods to forecast.
         **kwargs: Hyperparameters and other arguments from the config.
+                  Includes future_x_df (pd.DataFrame | None) when future
+                  exogenous data is available.
 
     Returns:
         One of the following:
@@ -556,11 +572,28 @@ def my_model(train_df: pd.DataFrame, horizon: int, **kwargs) -> pd.DataFrame:
         - Tuple[DataFrame, DataFrame]: Forecast + in-sample fitted values.
         - Tuple[DataFrame, DataFrame | None, object]: Forecast + optional
           fitted values + fitted model object (for serialization).
+
+    Forecast DataFrame schema: ds, unique_id, ypred
+    Fitted values DataFrame schema: ds, unique_id, ypred
     """
     ...
 ```
 
-The system imports the callable dynamically from the import path specified in the config and passes hyperparameters as `**kwargs`.
+The system imports the callable dynamically from the import path specified in the config and passes hyperparameters as `**kwargs`. Future exogenous data is passed via `invoke_model`'s explicit `future_x_df` parameter (see section 3.2), which the system then passes through to the model callable as a keyword argument.
+
+### 7.2 Forecast and Fitted Values DataFrame Schema
+
+Both the forecast DataFrame and the fitted values DataFrame use the same schema:
+
+| Column      | Description                                       |
+| ----------- | ------------------------------------------------- |
+| `ds`        | Timestamp                                         |
+| `unique_id` | Series identifier                                 |
+| `ypred`     | Predicted value (forecast or in-sample fitted)    |
+
+The column name `ypred` (no underscore) is the standard name for predictions throughout the system. This applies to both out-of-sample forecasts and in-sample fitted values.
+
+### 7.3 Return Type Detection
 
 The system detects the return type by length:
 
@@ -580,13 +613,18 @@ return forecast_df, None, model_object
 
 The model object (third element) is used by the serialization system when enabled. If the model object is `None` and serialization is enabled, the system logs a warning and skips serialization for that fold.
 
-### 7.2 In-Sample Fitted Values
+### 7.4 In-Sample Fitted Values
 
 The system supports three cases for in-sample fitted values:
 
-**Case 1: No fitted values available.** Some models (e.g., pretrained models like Amazon Chronos) do not produce in-sample fitted values. The model callable returns only a forecast DataFrame. The `fitted_values` field in `CVResults` and `TestResults` is `None`.
+**Case 1: No fitted values available.** Some models (e.g., pretrained models like Amazon Chronos) do not produce in-sample fitted values. The model callable returns only a forecast DataFrame. The `fitted_values` and `fitted_values_model_scale` fields in `CVResults` and `TestResults` are `None`.
 
 **Case 2: Model exposes fitted values.** Some models (e.g., Nixtla statsforecast, mlforecast) allow extraction of in-sample fitted values as a natural byproduct of the fitting process. In this case, the model callable optionally returns a tuple of `(forecast_df, fitted_values_df)` instead of just `forecast_df`.
+
+The model returns fitted values on the **transformed (model) scale** — these are the fitted values as the model sees them, after transforms have been applied. The system stores these directly as `fitted_values_model_scale`. The system then applies inverse transforms to produce `fitted_values` on the original scale. Both are stored as separate fields in the results dataclasses:
+
+- **`fitted_values`**: Fitted values on the original scale of `y` (after inverse transforms).
+- **`fitted_values_model_scale`**: Fitted values on the transformed scale used during modeling (as returned by the model).
 
 The system detects the return type. If the callable returns a DataFrame, there are no fitted values. If it returns a tuple, the system unpacks the forecast and fitted values.
 
@@ -596,10 +634,10 @@ def chronos_model(train_df, horizon, **kwargs):
     ...
     return forecast_df
 
-# Case 2 — model provides fitted values
+# Case 2 — model provides fitted values (on transformed/model scale)
 def arima_model(train_df, horizon, **kwargs):
     ...
-    fitted_values_df = ...  # extracted from the fitted model
+    fitted_values_df = ...  # extracted from the fitted model, schema: ds, unique_id, ypred
     return forecast_df, fitted_values_df
 ```
 
@@ -607,7 +645,7 @@ The user can compute residuals from fitted values in whichever convention they p
 
 **Case 3: System-computed fitted values (out of scope for V1).** Computing in-sample fitted values by re-running the model on the training data is deferred to a future version due to the complexity of varying model semantics across different forecasting libraries.
 
-### 7.3 Model Configuration
+### 7.5 Model Configuration
 
 ```yaml
 model:
@@ -620,7 +658,7 @@ model:
 
 The `model_n_jobs` parameter is passed through to the model callable for models that support internal parallelization (e.g., `n_jobs` in statsforecast). Models that do not support it (e.g., Chronos) simply ignore it.
 
-### 7.4 Model Serialization
+### 7.6 Model Serialization
 
 Model serialization is opt-in via the config. When enabled, the system attempts to serialize the fitted model on a best-effort basis after each fold. If serialization fails, the system logs a warning and continues.
 
@@ -834,6 +872,7 @@ data:
   target_col: y
   date_col: ds
   id_col: unique_id
+  freq: "MS"               # required — e.g., "MS" (month-start), "D" (daily), "W" (weekly), "h" (hourly)
   exogenous_columns: [price, promotions, temperature]
 
 # --- Cross-Validation ---
@@ -857,7 +896,7 @@ transforms:
     class: tsbricks.blocks.transforms.TradingDayNormalization
     scope: global
     targets: [y]
-    invertible: true
+    perform_inverse_transform: true
     params:
       calendar: NYSE
 
@@ -865,7 +904,7 @@ transforms:
     class: tsbricks.blocks.transforms.BoxCoxTransform
     scope: per_series
     targets: [y]
-    invertible: true
+    perform_inverse_transform: true
     model_native: false
     params:
       lambda_range: [0, 2]
@@ -912,14 +951,13 @@ parallelization:
 
 # --- Artifact Storage ---
 artifact_storage:
-  output_path: gs://my-bucket/experiments/run_001/
   uv_lock_path: ./uv.lock
-
-# --- Experiment Tracking ---
-experiment_tracking:
-  experiment_name: demand_forecasting_v1
-  run_name_prefix: auto_arima
 ```
+
+**V1 changes from initial design:**
+- `data.freq` is required (see section 4.4 for rationale).
+- `artifact_storage.output_path` is removed from V1. The system returns structured results as a Python dataclass; the user controls where and how artifacts are persisted.
+- The `experiment_tracking` config section is removed from V1. The user controls logging to Vertex AI Experiments directly using the Vertex AI SDK (see section 12).
 
 ______________________________________________________________________
 
@@ -936,15 +974,17 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class CVResults:
-    """Cross-validation results. Used during model selection."""
+    """Cross-validation results. Used during model selection.
+    Dict keys use fold naming convention: fold_0, fold_1, etc. (see section 5.3)."""
     # --- Always present ---
-    forecasts_per_fold: dict[str, pd.DataFrame]
+    forecasts_per_fold: dict[str, pd.DataFrame]       # fold_id -> DataFrame(ds, unique_id, ypred)
     metrics: pd.DataFrame
     fold_origins: list[pd.Timestamp]
     train_val_splits_per_fold: dict[str, dict[str, pd.DataFrame]]
 
     # --- Present depending on model/config ---
-    fitted_values: dict[str, pd.DataFrame] | None = None
+    fitted_values: dict[str, pd.DataFrame] | None = None              # original scale
+    fitted_values_model_scale: dict[str, pd.DataFrame] | None = None  # transformed scale
     transform_params: dict[str, dict[str, dict]] | None = None
     metric_instability_flags: pd.DataFrame | None = None
     metric_groups: dict[str, pd.DataFrame] | None = None
@@ -954,13 +994,14 @@ class CVResults:
 @dataclass(frozen=True)
 class TestResults:
     """Test fold results. Structurally isolated from CV results."""
-    forecasts: pd.DataFrame
+    forecasts: pd.DataFrame                            # DataFrame(ds, unique_id, ypred)
     metrics: pd.DataFrame
     test_origin: pd.Timestamp
     train_test_split: dict[str, pd.DataFrame]
 
     # --- Present depending on model/config ---
-    fitted_values: pd.DataFrame | None = None
+    fitted_values: pd.DataFrame | None = None              # original scale
+    fitted_values_model_scale: pd.DataFrame | None = None  # transformed scale
     transform_params: dict[str, dict] | None = None
     metric_instability_flags: pd.DataFrame | None = None
     metric_groups: pd.DataFrame | None = None
@@ -989,6 +1030,8 @@ class BacktestResults:
 
 Note that `CVResults` uses per-fold structures (e.g., `dict[str, pd.DataFrame]`) because there are multiple CV folds, while `TestResults` uses single DataFrames because there is only one test fold. This makes the types precise to each context.
 
+Both `fitted_values` and `fitted_values_model_scale` share the same DataFrame schema (`ds`, `unique_id`, `ypred`). The difference is the scale: `fitted_values` contains values inverse-transformed back to the original scale of `y`, while `fitted_values_model_scale` contains the model's raw fitted values on the transformed scale. Both are `None` when the model does not return fitted values (see section 7.4).
+
 ### 11.2 Metrics DataFrame Schema
 
 The `metrics` DataFrame uses a long format that accommodates per-series, grouped, and global metrics in a single table:
@@ -997,7 +1040,7 @@ The `metrics` DataFrame uses a long format that accommodates per-series, grouped
 | -------------------- | ----------------------------------------------------------------------- |
 | `metric_name`        | Name of the metric (e.g., `rmsse`, `wrmsse`, `mae`)                     |
 | `unique_id`          | Series identifier, or `None` for global/grouped metrics                 |
-| `fold`               | Fold identifier (e.g., `fold_1`) or `pooled`                            |
+| `fold`               | Fold identifier (e.g., `fold_0`) or `pooled`                            |
 | `aggregation`        | One of `per_series`, `group`, `global`                                  |
 | `value`              | Computed metric value                                                   |
 | *(grouping columns)* | Optional columns (e.g., `product_class`, `country`) for grouped metrics |
@@ -1037,6 +1080,8 @@ ______________________________________________________________________
 
 The system prepares structured artifacts in the `BacktestResults` dataclass. The user controls logging to Vertex AI Experiments directly using the Vertex AI SDK. The system does not abstract or wrap the Vertex AI Experiments API in V1.
 
+**V1 note:** The `experiment_tracking` config section has been removed from V1. There is no system-managed experiment tracking configuration. The user is responsible for all Vertex AI Experiments SDK calls. A future version may add an experiment tracking abstraction with pluggable backends (see section 15).
+
 ### 12.2 Helper Utilities
 
 The system provides helper utilities that make it convenient to extract artifacts from `BacktestResults` in formats suitable for Vertex AI Experiments logging (e.g., flattened metric dicts, serialized config, DataFrames as parquet bytes).
@@ -1045,34 +1090,36 @@ The system provides helper utilities that make it convenient to extract artifact
 
 The following artifacts are available for logging per run:
 
-| Artifact               | Source                          | Description                                 |
-| ---------------------- | ------------------------------- | ------------------------------------------- |
-| YAML config            | `config`                        | Full configuration for reproducibility      |
-| **CV artifacts**       |                                 |                                             |
-| CV train/val splits    | `cv.train_val_splits_per_fold`  | Per-fold training and validation DataFrames |
-| CV forecasts           | `cv.forecasts_per_fold`         | Per-fold y_pred aligned to y_true           |
-| CV fitted values       | `cv.fitted_values`              | In-sample fitted values (when available)    |
-| CV metric values       | `cv.metrics`                    | Per-series, grouped, and global metrics     |
-| CV instability flags   | `cv.metric_instability_flags`   | Flags for degenerate metric computations    |
-| CV grouped metrics     | `cv.metric_groups`              | Metrics by grouping columns                 |
-| CV forecast origins    | `cv.fold_origins`               | Dates defining each CV fold                 |
-| CV transform params    | `cv.transform_params`           | Fitted/fixed parameters per fold per series |
-| CV fitted models       | `cv.fitted_models`              | Serialized model per fold (when enabled)    |
-| **Test artifacts**     |                                 |                                             |
-| Test train/test split  | `test.train_test_split`         | Training and test DataFrames                |
-| Test forecasts         | `test.forecasts`                | y_pred aligned to y_true                    |
-| Test fitted values     | `test.fitted_values`            | In-sample fitted values (when available)    |
-| Test metric values     | `test.metrics`                  | Per-series, grouped, and global metrics     |
-| Test instability flags | `test.metric_instability_flags` | Flags for degenerate metric computations    |
-| Test grouped metrics   | `test.metric_groups`            | Metrics by grouping columns                 |
-| Test origin            | `test.test_origin`              | Forecast origin date for test fold          |
-| Test transform params  | `test.transform_params`         | Fitted/fixed parameters per series          |
-| Test fitted model      | `test.fitted_model`             | Serialized model (when enabled)             |
-| **Shared metadata**    |                                 |                                             |
-| Forecast horizon       | `horizon`                       | Fixed horizon for the run                   |
-| uv.lock                | `uv_lock`                       | Dependency lockfile contents                |
-| Git hash               | `git_hash`                      | Code version identifier                     |
-| Run summary            | `run_summary`                   | Success/failure/warning counts and details  |
+| Artifact                        | Source                              | Description                                        |
+| ------------------------------- | ----------------------------------- | -------------------------------------------------- |
+| YAML config                     | `config`                            | Full configuration for reproducibility             |
+| **CV artifacts**                |                                     |                                                    |
+| CV train/val splits             | `cv.train_val_splits_per_fold`      | Per-fold training and validation DataFrames        |
+| CV forecasts                    | `cv.forecasts_per_fold`             | Per-fold ypred aligned to y_true                   |
+| CV fitted values                | `cv.fitted_values`                  | In-sample fitted values, original scale            |
+| CV fitted values (model scale)  | `cv.fitted_values_model_scale`      | In-sample fitted values, transformed scale         |
+| CV metric values                | `cv.metrics`                        | Per-series, grouped, and global metrics            |
+| CV instability flags            | `cv.metric_instability_flags`       | Flags for degenerate metric computations           |
+| CV grouped metrics              | `cv.metric_groups`                  | Metrics by grouping columns                        |
+| CV forecast origins             | `cv.fold_origins`                   | Dates defining each CV fold                        |
+| CV transform params             | `cv.transform_params`               | Fitted/fixed parameters per fold per series        |
+| CV fitted models                | `cv.fitted_models`                  | Serialized model per fold (when enabled)           |
+| **Test artifacts**              |                                     |                                                    |
+| Test train/test split           | `test.train_test_split`             | Training and test DataFrames                       |
+| Test forecasts                  | `test.forecasts`                    | ypred aligned to y_true                            |
+| Test fitted values              | `test.fitted_values`                | In-sample fitted values, original scale            |
+| Test fitted values (model scale)| `test.fitted_values_model_scale`    | In-sample fitted values, transformed scale         |
+| Test metric values              | `test.metrics`                      | Per-series, grouped, and global metrics            |
+| Test instability flags          | `test.metric_instability_flags`     | Flags for degenerate metric computations           |
+| Test grouped metrics            | `test.metric_groups`                | Metrics by grouping columns                        |
+| Test origin                     | `test.test_origin`                  | Forecast origin date for test fold                 |
+| Test transform params           | `test.transform_params`             | Fitted/fixed parameters per series                 |
+| Test fitted model               | `test.fitted_model`                 | Serialized model (when enabled)                    |
+| **Shared metadata**             |                                     |                                                    |
+| Forecast horizon                | `horizon`                           | Fixed horizon for the run                          |
+| uv.lock                         | `uv_lock`                           | Dependency lockfile contents                       |
+| Git hash                        | `git_hash`                          | Code version identifier                            |
+| Run summary                     | `run_summary`                       | Success/failure/warning counts and details         |
 
 ______________________________________________________________________
 
@@ -1093,17 +1140,21 @@ The system validates as much as possible before beginning computation:
 
 - YAML config parses without error.
 - Required config sections and fields are present.
+- `data.freq` is present and is a valid pandas frequency string.
 - Callable import paths for model, metrics, and transforms resolve successfully.
-- Required columns (`ds`, `unique_id`, `y`) exist in the target DataFrame.
+- Required columns (mapped via `target_col`, `date_col`, `id_col`) exist in the input DataFrame.
 - Exogenous columns specified in the config exist in the DataFrame.
-- Forecast origins (explicit mode) fall within the data's date range.
+- Forecast origins (explicit mode) fall within the data's date range. **Each explicit origin is validated against the data's `ds` values** — if an origin doesn't match any `ds` value, it is almost certainly a user error. This cheap upfront check prevents confusing downstream failures.
 - Horizon is a positive integer.
 - Parametric CV settings produce valid fold origins.
-- No contradictory settings (e.g., `model_native: true` with `invertible: true` on the same transform).
+- No contradictory settings (e.g., `model_native: true` with `perform_inverse_transform: true` on the same transform).
+- `perform_inverse_transform: false` on a transform targeting `y` raises `NotImplementedError` (V1 constraint — see section 6.5).
 - Serialization method is valid if serialization is enabled.
-- Test fold origin (if test is enabled) falls within the data's date range.
+- `test_origin` is required when `test.enabled: true`. Missing `test_origin` with test enabled is a validation error.
+- `test_origin + horizon <= data_end`. The test fold's validation window must fit within the available data.
 - Test fold origin (if test is enabled) is after the last CV forecast origin, ensuring no overlap between CV validation data and test data.
 - If `config_path` and `config` are both provided, or neither is provided, raise an error.
+- **Warning (not error):** If `test.enabled: false` but `test_origin` is provided, the system logs a warning that the test origin is being ignored.
 
 ### 13.4 Series-Level Failures
 
