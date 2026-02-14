@@ -62,10 +62,12 @@ config = parse_config(config_path="config.yaml")
 config = parse_config(config=config_dict)
 ```
 
-**`generate_folds(df, cv_config, test_config=None)`** — Produces CV fold splits (and optionally the test split) from the DataFrame and cross-validation config. Returns a dict of fold splits, each containing training and validation DataFrames.
+**`generate_folds(df, cv_config, test_config=None)`** — Produces CV fold splits (and optionally the test split) from the DataFrame and cross-validation config. Returns a tuple of `(cv_folds, test_split)` where `cv_folds` is a dict of fold splits (each containing training and validation DataFrames) and `test_split` is a single fold split dict or `None` if test is disabled. This tuple return enforces structural separation between CV and test at the API level.
 
 ```python
-folds = generate_folds(df, config.cross_validation, config.test)
+cv_folds, test_split = generate_folds(df, config.cross_validation, config.test)
+# cv_folds = {"fold_0": {"train": df, "val": df}, "fold_1": ...}
+# test_split = {"train": df, "val": df} or None
 ```
 
 **`fit_transforms(train_df, transform_config)`** — Fits the transform chain on training data. Returns fitted transform objects and the transformed training DataFrame.
@@ -87,11 +89,12 @@ model_fn, hyperparameters = resolve_model(config.model)
 forecast_df = model_fn(transformed_train_df, horizon=12, **hyperparameters)
 ```
 
-**`invoke_model(train_df, model_config, horizon)`** — Convenience wrapper that resolves the model callable, invokes it, and unpacks the return tuple into its three components (forecast, fitted values, model object), with `None` for missing elements. This gives the same behavior as `run_backtest`'s internal model invocation.
+**`invoke_model(train_df, model_config, horizon, future_x_df=None)`** — Convenience wrapper that resolves the model callable, invokes it, and unpacks the return tuple into its three components (forecast, fitted values, model object), with `None` for missing elements. The `future_x_df` parameter passes future exogenous data through to the model callable. This is an explicit named parameter (not `**kwargs`) because future exogenous data is a runtime data input — like `train_df` — rather than an arbitrary config override. This gives the same behavior as `run_backtest`'s internal model invocation.
 
 ```python
 forecast_df, fitted_values_df, model_object = invoke_model(
-    transformed_train_df, config.model, config.cross_validation.horizon
+    transformed_train_df, config.model, config.cross_validation.horizon,
+    future_x_df=future_x_df,
 )
 ```
 
@@ -143,9 +146,11 @@ from tsbricks.runner import fit_transforms, apply_transforms, inverse_transforms
 
 df = pd.read_parquet("gs://my-bucket/data/sales_with_features.parquet")
 config = parse_config(config_path="config.yaml")
-folds = generate_folds(df, config.cross_validation, config.test)
 
-for fold_id, fold_split in folds.items():
+# generate_folds returns a tuple: (cv_folds dict, test_split or None)
+cv_folds, test_split = generate_folds(df, config.cross_validation, config.test)
+
+for fold_id, fold_split in cv_folds.items():
     train_df, val_df = fold_split["train"], fold_split["val"]
 
     # Fit transforms on training data
@@ -156,9 +161,10 @@ for fold_id, fold_split in folds.items():
     print(f"Fold {fold_id}: transformed_train shape = {transformed_train.shape}")
     print(f"Box-Cox lambda: {fitted_transforms[0].get_fitted_params()}")
 
-    # Invoke model
+    # Invoke model (future_x_df is optional, for models that use future exogenous data)
     forecast_df, fitted_values_df, model_object = invoke_model(
-        transformed_train, config.model, config.cross_validation.horizon
+        transformed_train, config.model, config.cross_validation.horizon,
+        future_x_df=transformed_val[["ds", "unique_id", "price", "promotions"]],
     )
 
     # Inverse transform forecasts to original scale
@@ -170,6 +176,20 @@ for fold_id, fold_split in folds.items():
         y_train=train_df, metrics_config=config.metrics
     )
     print(f"Fold {fold_id} RMSSE: {metrics_df.query('metric_name == \"rmsse\"')['value'].mean():.4f}")
+
+# Process test fold separately if enabled
+if test_split is not None:
+    train_df, test_df = test_split["train"], test_split["val"]
+    fitted_transforms, transformed_train = fit_transforms(train_df, config.transforms)
+    forecast_df, fitted_values_df, model_object = invoke_model(
+        transformed_train, config.model, config.cross_validation.horizon,
+    )
+    forecast_original_scale = inverse_transforms(forecast_df, fitted_transforms)
+    test_metrics = evaluate_metrics(
+        y_true=test_df, y_pred=forecast_original_scale,
+        y_train=train_df, metrics_config=config.metrics
+    )
+    print(f"Test RMSSE: {test_metrics.query('metric_name == \"rmsse\"')['value'].mean():.4f}")
 ```
 
 ______________________________________________________________________
@@ -178,13 +198,19 @@ ______________________________________________________________________
 
 ### 4.1 Input Convention
 
-The system accepts pandas DataFrames in Nixtla long format. Polars DataFrames are also accepted at the `run_backtest` entry point and are converted to pandas internally. All internal processing uses pandas.
+The system accepts pandas DataFrames in Nixtla long format. Polars DataFrames are also accepted at the `run_backtest` entry point and are converted to pandas internally (see section 4.5). All internal processing uses pandas.
 
-| Column      | Description                            |
-| ----------- | -------------------------------------- |
-| `ds`        | Timestamp column                       |
-| `unique_id` | Unique identifier for each time series |
-| `y`         | Target variable                        |
+The user's DataFrame may use any column names for the target, date, and ID columns. The config's `data` section maps user column names to the internal standard names:
+
+| Internal Name | Config Field  | Description                            |
+| ------------- | ------------- | -------------------------------------- |
+| `y`           | `target_col`  | Target variable                        |
+| `ds`          | `date_col`    | Timestamp column                       |
+| `unique_id`   | `id_col`      | Unique identifier for each time series |
+
+`run_backtest` renames the user's columns to `y`, `ds`, `unique_id` at entry, immediately after Polars conversion (if applicable). **All internal processing, step functions, and output DataFrames use the standard names `y`, `ds`, `unique_id`.** Output DataFrames are not renamed back to the user's original column names — results consistently use the standard names.
+
+**Step functions** (`fit_transforms`, `apply_transforms`, `invoke_model`, etc.) expect DataFrames with the standard column names `y`, `ds`, `unique_id`. A power user calling step functions directly is responsible for providing DataFrames with these column names.
 
 Exogenous variables (`X_exogenous`) are provided as additional columns in the same DataFrame that contains `ds`, `unique_id`, and `y`. The config's `exogenous_columns` field specifies which columns are exogenous features. If no exogenous variables are used, `exogenous_columns` is `None` or an empty list. The user is responsible for joining exogenous data into the target DataFrame before passing it to the system.
 
@@ -213,7 +239,15 @@ The system supports both single time series and panel data (multiple `unique_id`
 
 ### 4.4 Temporal Granularity
 
-The system supports hourly, daily, weekly, and monthly time series. The granularity is not explicitly configured; it is inferred from the `ds` column and the user's cross-validation and horizon settings.
+The system supports hourly, daily, weekly, and monthly time series. **The frequency must be specified explicitly in the config's `data` section via the `freq` field** (e.g., `freq: "MS"` for month-start, `freq: "D"` for daily). The system does not infer frequency from the data.
+
+**Why explicit frequency is required.** `pd.infer_freq()` is unreliable in practice: it fails on series with gaps, returns `None` for short series, can produce ambiguous results for monthly data (`"M"` vs `"MS"` vs `"ME"`), and behaves inconsistently across pandas versions. In a panel setting, different series may have different gap patterns, making inference even less reliable. Requiring the user to specify `freq` eliminates this class of subtle bugs. The `freq` value is used for parametric fold origin computation and validation.
+
+### 4.5 Polars Conversion
+
+Polars DataFrames are accepted at the `run_backtest` entry point. The conversion to pandas happens at the very top of `run_backtest`, before column renaming and before any other processing. The step functions (`fit_transforms`, `invoke_model`, etc.) only accept pandas — they never see Polars. A power user calling step functions directly is responsible for providing pandas DataFrames.
+
+This design keeps V1 simple while establishing the entry point where native Polars support can be added in V2 (see section 15).
 
 ______________________________________________________________________
 
@@ -246,33 +280,62 @@ cross_validation:
     - "2023-10-01"
 ```
 
-**Parametric.** The user specifies the number of folds and the step size (increment to slide the forecast origin). The system computes forecast origin dates by working backward from the end of the data.
+**Parametric.** The user specifies the number of folds and the step size (increment to slide the forecast origin). The system computes forecast origin dates by working backward from a boundary date. The boundary date depends on whether the test fold is enabled:
+
+- **Test enabled:** The boundary is the `test_origin` date (the forecast origin of the test period).
+- **Test disabled:** The boundary is the last date in the data (`data_end`).
+
+The most recent CV fold origin is computed as `boundary - horizon` periods. Each subsequent fold steps backward by `step_size` periods. This ensures CV validation windows never overlap with the test period.
+
+**Example.** Monthly data ending 2024-12-01, `horizon: 3`, `n_folds: 4`, `step_size: 2`, `test_origin: 2024-06-01`:
+
+```
+Boundary = test_origin = 2024-06-01 (test fold trains up to here)
+Most recent CV origin = 2024-06-01 - 3 months = 2024-03-01
+fold_3 origin: 2024-03-01 (validates 2024-04, 2024-05, 2024-06)
+fold_2 origin: 2024-01-01 (validates 2024-02, 2024-03, 2024-04)
+fold_1 origin: 2023-11-01 (validates 2023-12, 2024-01, 2024-02)
+fold_0 origin: 2023-09-01 (validates 2023-10, 2023-11, 2023-12)
+Test fold:     trains up to 2024-06-01, validates 2024-07, 2024-08, 2024-09
+```
 
 ```yaml
 cross_validation:
   mode: parametric
-  horizon: 12
+  horizon: 3
   n_folds: 4
-  step_size: 3  # periods to shift origin between folds
+  step_size: 2  # periods to shift origin between folds
 ```
 
-### 5.3 Fixed Forecast Horizon
+### 5.3 Fold Naming Convention
+
+CV fold dicts use zero-indexed, dynamically zero-padded keys. The padding width is determined by the maximum fold index: `fold_0`, `fold_1`, ..., `fold_9` for 1–10 folds (indices 0–9, single digit); `fold_00`, `fold_01`, ..., `fold_10` for 11 folds (indices 0–10, two digits needed); up to `fold_00`, ..., `fold_99` for 100 folds. Folds are ordered chronologically by origin date (fold_0 has the earliest origin).
+
+### 5.4 Fixed Forecast Horizon
 
 The forecast horizon is constant across all folds within a run, including the test fold. The forecast horizon is the number of time steps to forecast for each cross-validation fold. It is specified in the `cross_validation` section of the config.
 
-### 5.4 Test Fold
+### 5.5 Test Fold
 
 The system supports a separate test fold that is structurally isolated from the cross-validation folds. The test fold is processed as a completely separate phase after cross-validation: the model is trained on all data up to the test origin, forecasts are generated for the same horizon, the same transforms and inverse transforms are applied, and the same metrics are computed. Test results are stored in a separate dataclass (`TestResults`) to prevent accidental mixing with CV results during model selection.
+
+**`test_origin` is required when `test.enabled: true`.** The test origin is the forecast origin of the test period — the test set begins at the first time step after the test origin. This is consistent with the CV origin terminology: a "forecast origin" is always the last training observation, and the forecast begins immediately after it.
+
+**`test_origin` serves as the CV/test boundary.** When test is enabled, parametric CV computes fold origins backward from `test_origin` (see section 5.2). This guarantees that no CV validation window overlaps with the test period.
+
+**Validation:** `test_origin + horizon <= data_end`. The test fold's validation window must fit within the available data.
+
+**Warning when `test_origin` provided but test disabled.** If `test.enabled: false` but `test_origin` is provided, the system logs a warning to alert the user that the test origin is being ignored. This is not an error — it may be intentional during iterative development.
 
 The test fold is enabled by default but can be disabled by the user. When disabled, test result fields are `None`.
 
 ```yaml
 test:
   enabled: true
-  test_origin: "2024-01-01"
+  test_origin: "2024-06-01"
 ```
 
-### 5.5 Internal Representation
+### 5.6 Internal Representation
 
 Both the "explicit forecast origin" and the "parametric" modes produce the same internal representation: an ordered list of forecast origin dates. All downstream logic (splitting, fitting, evaluating) operates on this list without knowledge of which mode produced it. The test fold origin is handled separately from the CV fold origins.
 
@@ -282,31 +345,39 @@ ______________________________________________________________________
 
 ### 6.1 Overview
 
-Transforms are a small, ordered chain of operations applied to the data before modeling and (for invertible transforms on `y`) inverted after forecasting and before metric evaluation. Transforms are applied sequentially in the order specified in the config.
+Transforms are a small, ordered chain of operations applied to the data before modeling and (for transforms on `y` with `perform_inverse: true`) inverted after forecasting and before metric evaluation. Transforms are applied sequentially in the order specified in the config.
 
 ### 6.2 Transform Object Interface
 
-Each transform is a Python object implementing the following methods:
+Each transform is a Python object that extends `BaseTransform` and implements the following methods. The interface operates on **DataFrames** with at least `ds`, `unique_id`, and the column being transformed. The column name is passed explicitly via `target_col`. Each call operates on one column at a time — if a transform config specifies `targets: [y, revenue]`, the system calls `fit_transform` once for `y` and once for `revenue`.
 
 ```python
-class SomeTransform:
-    def fit_transform(self, series, **params):
-        """Fit parameters from data and return transformed series.
-        For fixed-parameter transforms, reads params without fitting."""
+from tsbricks.blocks.transforms import BaseTransform
+
+class SomeTransform(BaseTransform):
+    def fit_transform(self, df: pd.DataFrame, target_col: str, **params) -> pd.DataFrame:
+        """Fit parameters from data and return DataFrame with target_col transformed.
+        For fixed-parameter transforms, reads params without fitting.
+        The transform fits independently per (unique_id, target_col) combination."""
         ...
 
-    def transform(self, series):
-        """Apply already-fitted parameters to new data (e.g., validation set)."""
+    def transform(self, df: pd.DataFrame, target_col: str) -> pd.DataFrame:
+        """Apply already-fitted parameters to new data (e.g., validation set).
+        Returns DataFrame with target_col transformed."""
         ...
 
-    def inverse_transform(self, series):
-        """Reverse the transform. Used on forecasted y."""
+    def inverse_transform(self, df: pd.DataFrame, target_col: str) -> pd.DataFrame:
+        """Reverse the transform. Used on forecasted y.
+        Returns DataFrame with target_col inverse-transformed."""
         ...
 
-    def get_fitted_params(self):
-        """Return dict of fitted or fixed parameters for artifact logging."""
+    def get_fitted_params(self) -> dict:
+        """Return dict of fitted or fixed parameters for artifact logging.
+        Values must be plain Python types (float, int, str), not numpy scalars."""
         ...
 ```
+
+**`BaseTransform`** is an abstract base class provided by `tsbricks.blocks.transforms`. It defines the four-method interface and provides a default `_map_per_series` helper method that isolates per-series iteration into a single swappable location. All built-in transforms extend `BaseTransform`. User-provided transforms should also extend `BaseTransform` but this is not strictly enforced at runtime.
 
 The `fit_transform` method is called on each fold's training data. The `transform` method is called on the validation set using the parameters fitted from the training set. The `inverse_transform` method is applied to the model's forecasted `y` to return predictions to the original scale before metric evaluation.
 
@@ -316,14 +387,16 @@ Inverse transforms are only applied to `y`. Exogenous variables are model inputs
 
 Each transform declares a scope:
 
-- **`per_series`**: A separate transform instance is created (or refit) for each `unique_id`. Fitted parameters may differ across series. Examples: Box-Cox, Z-score standardization.
-- **`global`**: A single transform instance is shared across all series. Examples: trading day normalization using a shared calendar, company working day normalization using company holidays, Z-score standardization applied once over the entire panel dataset, or a transformation from nominal dollars to real dollars (V1 assumes all series share the same currency).
+- **`per_series`**: The transform fits independently for each `unique_id`. Fitted parameters may differ across series. The full panel DataFrame is passed to the transform; the transform uses `_map_per_series` internally to iterate over `unique_id` values. Examples: Box-Cox, StandardScaler.
+- **`global`**: A single transform instance is shared across all series. The full panel DataFrame is passed directly — no splitting or concatenation is needed. The transform fits once on the entire panel. Examples: trading day normalization using a shared calendar, company working day normalization using company holidays, StandardScaler applied once over the entire panel dataset, or a transformation from nominal dollars to real dollars (V1 assumes all series share the same currency).
 
 The transform scope implementation is designed to accommodate a future `per_group` scope (e.g., applying different transforms to subsets of series grouped by currency or product class) without architectural changes.
 
-### 6.4 Targets
+### 6.4 Targets and Multi-Target Handling
 
 Each transform declares which columns it operates on via the `targets` field. The reserved keyword `y` refers to the target variable. Any other name refers to a specific column(s) corresponding to the exogenous variables. Different exogenous variables can receive different transforms.
+
+When a transform specifies multiple targets (e.g., `targets: [y, revenue]`), the system calls `fit_transform` once for each target column. Each `(unique_id, target_col)` combination is fitted independently — there is no parameter sharing across columns. This one-column-per-call design keeps the transform interface simple and avoids ambiguity about which column's parameters are being referenced.
 
 ```yaml
 transforms:
@@ -331,22 +404,33 @@ transforms:
     class: tsbricks.blocks.transforms.TradingDayNormalization
     scope: global
     targets: [y, revenue]
-    invertible: true
+    perform_inverse_transform: true
     params:
       calendar: NYSE
 
   - name: log_transform
-    class: tsbricks.blocks.transforms.LogTransform
+    class: tsbricks.blocks.transforms.NaturalLogTransform
     scope: per_series
     targets: [price]
-    invertible: true
+    perform_inverse_transform: false
 ```
 
-### 6.5 Fixed vs. Fitted Parameters
+### 6.5 The `perform_inverse_transform` Flag
+
+Each transform declares `perform_inverse_transform` in the config. This flag controls whether the inverse transform is applied to `y` after forecasting:
+
+- **`perform_inverse_transform: true`**: The system applies `inverse_transform` to the model's forecasted `y` to return predictions to the original scale before metric evaluation. This is the typical case for transforms on `y`.
+- **`perform_inverse_transform: false`**: The system skips inverse transformation. This is appropriate for transforms on exogenous columns (which are model inputs, not outputs) or for transforms where evaluation on the transformed scale is desired.
+
+**Inverse transforms are only applied to `y`.** If a transform specifies `perform_inverse_transform: true` and targets both `y` and non-`y` columns (e.g., `targets: [y, revenue, price]`), the system logs a warning listing the non-`y` columns for which inverse transform will not be performed. The inverse is applied to `y` only; exogenous columns are model inputs and do not appear in the forecast output.
+
+**V1 constraint:** `perform_inverse_transform` must be `true` for transforms targeting `y`. If the user sets `perform_inverse_transform: false` on a transform targeting `y`, the system raises `NotImplementedError` with a message explaining that evaluation on the transformed scale is deferred to a future version (see section 15). Transforms targeting only exogenous columns may have `perform_inverse_transform: false`.
+
+### 6.6 Fixed vs. Fitted Parameters
 
 Transforms support both modes:
 
-- **Fitted parameters.** The `fit_transform` method learns parameters from the training data (e.g., Box-Cox lambda, Z-score mean and std). These parameters are refit on each fold's training data to avoid data leakage. For fitted parameters, the user may optionally provide an allowed range within which the fitted parameter must be found. For some fitted parameters, the user may also specify the objective for the parameter fitting such as for the Box Cox transform the `loglik` (log likelihood) or `guerrero` may be specified by the user.
+- **Fitted parameters.** The `fit_transform` method learns parameters from the training data (e.g., Box-Cox lambda, StandardScaler mean and std). These parameters are refit on each fold's training data to avoid data leakage. For fitted parameters, the user may optionally provide an allowed range within which the fitted parameter must be found. For some fitted parameters, the user may also specify the objective for the parameter fitting such as for the Box Cox transform the `loglik` (log likelihood) or `guerrero` may be specified by the user.
 - **Fixed parameters.** The user supplies a parameter value in the config (e.g., `power: 0.3333` for a cube root). The `fit_transform` method uses the supplied value without fitting.
 
 There is also the ability to have overrides per-series where the user specifies the `unique_id` of the individual time series and the parameter overrides.
@@ -359,6 +443,7 @@ The transform object decides internally whether to fit or use a fixed value base
   class: tsbricks.blocks.transforms.BoxCoxTransform
   scope: per_series
   targets: [y]
+  perform_inverse_transform: true
   params:
     lambda_range: [0, 2]
 
@@ -367,6 +452,7 @@ The transform object decides internally whether to fit or use a fixed value base
   class: tsbricks.blocks.transforms.PowerTransform
   scope: per_series
   targets: [y]
+  perform_inverse_transform: true
   params:
     power: 0.3333
     fixed: true
@@ -376,6 +462,7 @@ The transform object decides internally whether to fit or use a fixed value base
   class: tsbricks.blocks.transforms.BoxCoxTransform
   scope: per_series
   targets: [y]
+  perform_inverse_transform: true
   params:
     lambda_range: [0, 2]
     series_overrides:
@@ -383,7 +470,7 @@ The transform object decides internally whether to fit or use a fixed value base
       SKU_002: {fixed_lambda: 0.5}
 ```
 
-### 6.6 Model-Native Transforms
+### 6.7 Model-Native Transforms
 
 Some forecast models handle certain transforms internally (e.g., AutoTBATS accepts `box_cox: true` with `bc_lower_bound` and `bc_upper_bound`; AutoARIMA accepts a Box-Cox `lambda` parameter). When `model_native: true` is set on a transform, the system skips external application of that transform and instead merges the transform's parameters into the model callable's `**kwargs`.
 
@@ -398,21 +485,21 @@ The `model_params_mapping` field translates between transform parameter names an
     bc_upper_bound: 1
 ```
 
-### 6.7 Built-in Transforms
+### 6.8 Built-in Transforms
 
-The system ships with built-in transform classes for common operations. Users can provide custom transforms following the same four-method interface.
+The system ships with built-in transform classes for common operations. All built-in transforms extend `BaseTransform`. Users can provide custom transforms following the same four-method interface (extending `BaseTransform` is recommended but not enforced at runtime).
 
 **Mathematical transforms (wrap NumPy directly):**
 
-- **NaturalLogTransform**: Applies `np.log` / `np.exp`. Strict — raises an error if the series contains values ≤ 0. The user should chain an `AddConstantTransform` before this transform if the series contains non-positive values.
+- **NaturalLogTransform**: Applies `np.log` / `np.exp`. Strict — raises an error if the column contains values ≤ 0. The user should chain an `AddConstantTransform` before this transform if the data contains non-positive values.
 - **Log1pTransform**: Applies `np.log1p` (i.e., `log(1 + x)`) / `np.expm1`. Numerically stable for small values and naturally handles zeros.
-- **PowerTransform**: Applies `series ** power` / `series ** (1/power)`. Supports any user-specified power (e.g., `power: 0.3333` for cube root).
+- **PowerTransform**: Applies `column ** power` / `column ** (1/power)`. Supports any user-specified power (e.g., `power: 0.3333` for cube root).
 - **AddConstantTransform**: Adds/subtracts a user-specified constant.
 
 **Statistical transforms:**
 
 - **BoxCoxTransform**: Wraps Nixtla's coreforecast (`coreforecast.scalers.boxcox` and `coreforecast.scalers.inv_boxcox`). Supports a `method` parameter (`guerrero` or `loglik`) for lambda selection and a `season_length` parameter required by the Guerrero method. These are simple params passthroughs — the additional parameters in the config are passed to the transform object's `fit_transform` via `**params`, and the system does not require any special handling for them.
-- **ZScoreTransform**: Fits mean and standard deviation from training data.
+- **StandardScaler**: Fits mean and standard deviation from training data. This is a custom implementation (not wrapping sklearn or coreforecast) to keep dependencies minimal and maintain full control over the per-series iteration pattern. The name `StandardScaler` aligns with the established convention in sklearn and other ML packages.
 
 **Domain-specific transforms:**
 
@@ -424,21 +511,21 @@ The system ships with built-in transform classes for common operations. Users ca
   class: tsbricks.blocks.transforms.NaturalLogTransform
   scope: per_series
   targets: [y]
-  invertible: true
+  perform_inverse_transform: true
 
 # Log1p (handles zeros)
 - name: log1p
   class: tsbricks.blocks.transforms.Log1pTransform
   scope: per_series
   targets: [y]
-  invertible: true
+  perform_inverse_transform: true
 
 # Box-Cox with Guerrero method
 - name: box_cox
   class: tsbricks.blocks.transforms.BoxCoxTransform
   scope: per_series
   targets: [y]
-  invertible: true
+  perform_inverse_transform: true
   params:
     method: guerrero
     season_length: 12
