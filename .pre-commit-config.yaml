@@ -1,0 +1,42 @@
+# Pre-commit handles file utilities; Taskfile handles linting/formatting
+# CI runs: task pre-commit (which invokes pre-commit run --all-files)
+
+repos:
+  # ============== File Utilities (native pre-commit) ==============
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.md$'
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: ["--unsafe"]
+      - id: check-toml
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: ["--maxkb=1000"]
+
+
+  # ============== Project Checks (delegate to Taskfile) ==============
+  - repo: local
+    hooks:
+      - id: task-lint
+        name: task lint
+        entry: task lint
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: task-format-check
+        name: task format-check
+        entry: task format-check
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: task-md-check
+        name: task md-check
+        entry: task md-check
+        language: system
+        pass_filenames: false
+        types: [markdown]

@@ -1,0 +1,11 @@
+# Changes here will be overwritten by Copier
+_commit: v0.2.0
+_src_path: gh:betsyhcamp/copier-python-mlplatform
+author_email: betsy.h.camp@gmail.com
+author_name: Elizabeth H. Camp
+ci_provider: github
+package_name: tsbricks
+project_name: tsbricks
+project_type: package
+python_version: 3.11.11
+
