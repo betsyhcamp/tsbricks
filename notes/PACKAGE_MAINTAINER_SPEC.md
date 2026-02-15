@@ -291,7 +291,7 @@ Transform methods accept DataFrames with at least `ds`, `unique_id`, and the tar
 The following patterns are required in V1 to enable future acceleration:
 
 1. Never mutate input DataFrames — always `df.copy()`.
-2. Store fitted parameters as plain Python types (`float`, `int`, `str`), not numpy scalars.
-3. No DataFrame index dependency — column-based operations only.
-4. Isolate per-series iteration into `_map_per_series`.
-5. `StandardScaler` is a custom implementation (not wrapping sklearn or coreforecast) to keep dependencies minimal and maintain full control over the per-series iteration pattern.
+1. Store fitted parameters as plain Python types (`float`, `int`, `str`), not numpy scalars.
+1. No DataFrame index dependency — column-based operations only.
+1. Isolate per-series iteration into `_map_per_series`.
+1. `StandardScaler` is a custom implementation (not wrapping sklearn or coreforecast) to keep dependencies minimal and maintain full control over the per-series iteration pattern.
