@@ -202,11 +202,11 @@ The system accepts pandas DataFrames in Nixtla long format. Polars DataFrames ar
 
 The user's DataFrame may use any column names for the target, date, and ID columns. The config's `data` section maps user column names to the internal standard names:
 
-| Internal Name | Config Field  | Description                            |
-| ------------- | ------------- | -------------------------------------- |
-| `y`           | `target_col`  | Target variable                        |
-| `ds`          | `date_col`    | Timestamp column                       |
-| `unique_id`   | `id_col`      | Unique identifier for each time series |
+| Internal Name | Config Field | Description                            |
+| ------------- | ------------ | -------------------------------------- |
+| `y`           | `target_col` | Target variable                        |
+| `ds`          | `date_col`   | Timestamp column                       |
+| `unique_id`   | `id_col`     | Unique identifier for each time series |
 
 `run_backtest` renames the user's columns to `y`, `ds`, `unique_id` at entry, immediately after Polars conversion (if applicable). **All internal processing, step functions, and output DataFrames use the standard names `y`, `ds`, `unique_id`.** Output DataFrames are not renamed back to the user's original column names — results consistently use the standard names.
 
@@ -539,13 +539,13 @@ The following implementation patterns are required in V1 to enable future accele
 
 1. **Never mutate input DataFrames.** All transform methods must operate on `df.copy()` and return new DataFrames. This ensures correctness under future parallel execution and prevents subtle bugs from shared mutable state.
 
-2. **Store fitted parameters as plain Python types.** `get_fitted_params()` must return `float`, `int`, `str` — not `numpy.float64` or other numpy scalars. This ensures serialization compatibility and avoids type-related surprises in downstream consumers.
+1. **Store fitted parameters as plain Python types.** `get_fitted_params()` must return `float`, `int`, `str` — not `numpy.float64` or other numpy scalars. This ensures serialization compatibility and avoids type-related surprises in downstream consumers.
 
-3. **No DataFrame index dependency.** All operations must be column-based, never relying on the DataFrame's index. This eliminates a class of bugs when DataFrames are sliced, concatenated, or converted between pandas and Polars (which has no index concept).
+1. **No DataFrame index dependency.** All operations must be column-based, never relying on the DataFrame's index. This eliminates a class of bugs when DataFrames are sliced, concatenated, or converted between pandas and Polars (which has no index concept).
 
-4. **Isolate per-series iteration into `_map_per_series`.** `BaseTransform` provides a `_map_per_series(df, target_col, fn)` helper that groups by `unique_id`, applies `fn` to each group, and reassembles the result. All per-series transforms use this single entry point for iteration. This allows future acceleration (e.g., swapping the loop for `joblib.Parallel` or a Polars `group_by.map_groups`) by changing one method.
+1. **Isolate per-series iteration into `_map_per_series`.** `BaseTransform` provides a `_map_per_series(df, target_col, fn)` helper that groups by `unique_id`, applies `fn` to each group, and reassembles the result. All per-series transforms use this single entry point for iteration. This allows future acceleration (e.g., swapping the loop for `joblib.Parallel` or a Polars `group_by.map_groups`) by changing one method.
 
-5. **`BaseTransform` base class.** All built-in transforms extend `BaseTransform`, which defines the four-method interface as abstract methods and provides `_map_per_series`. User-provided transforms should also extend `BaseTransform` but this is not enforced at runtime.
+1. **`BaseTransform` base class.** All built-in transforms extend `BaseTransform`, which defines the four-method interface as abstract methods and provides `_map_per_series`. User-provided transforms should also extend `BaseTransform` but this is not enforced at runtime.
 
 ______________________________________________________________________
 
@@ -585,11 +585,11 @@ The system imports the callable dynamically from the import path specified in th
 
 Both the forecast DataFrame and the fitted values DataFrame use the same schema:
 
-| Column      | Description                                       |
-| ----------- | ------------------------------------------------- |
-| `ds`        | Timestamp                                         |
-| `unique_id` | Series identifier                                 |
-| `ypred`     | Predicted value (forecast or in-sample fitted)    |
+| Column      | Description                                    |
+| ----------- | ---------------------------------------------- |
+| `ds`        | Timestamp                                      |
+| `unique_id` | Series identifier                              |
+| `ypred`     | Predicted value (forecast or in-sample fitted) |
 
 The column name `ypred` (no underscore) is the standard name for predictions throughout the system. This applies to both out-of-sample forecasts and in-sample fitted values.
 
@@ -955,6 +955,7 @@ artifact_storage:
 ```
 
 **V1 changes from initial design:**
+
 - `data.freq` is required (see section 4.4 for rationale).
 - `artifact_storage.output_path` is removed from V1. The system returns structured results as a Python dataclass; the user controls where and how artifacts are persisted.
 - The `experiment_tracking` config section is removed from V1. The user controls logging to Vertex AI Experiments directly using the Vertex AI SDK (see section 12).
@@ -1090,36 +1091,36 @@ The system provides helper utilities that make it convenient to extract artifact
 
 The following artifacts are available for logging per run:
 
-| Artifact                        | Source                              | Description                                        |
-| ------------------------------- | ----------------------------------- | -------------------------------------------------- |
-| YAML config                     | `config`                            | Full configuration for reproducibility             |
-| **CV artifacts**                |                                     |                                                    |
-| CV train/val splits             | `cv.train_val_splits_per_fold`      | Per-fold training and validation DataFrames        |
-| CV forecasts                    | `cv.forecasts_per_fold`             | Per-fold ypred aligned to y_true                   |
-| CV fitted values                | `cv.fitted_values`                  | In-sample fitted values, original scale            |
-| CV fitted values (model scale)  | `cv.fitted_values_model_scale`      | In-sample fitted values, transformed scale         |
-| CV metric values                | `cv.metrics`                        | Per-series, grouped, and global metrics            |
-| CV instability flags            | `cv.metric_instability_flags`       | Flags for degenerate metric computations           |
-| CV grouped metrics              | `cv.metric_groups`                  | Metrics by grouping columns                        |
-| CV forecast origins             | `cv.fold_origins`                   | Dates defining each CV fold                        |
-| CV transform params             | `cv.transform_params`               | Fitted/fixed parameters per fold per series        |
-| CV fitted models                | `cv.fitted_models`                  | Serialized model per fold (when enabled)           |
-| **Test artifacts**              |                                     |                                                    |
-| Test train/test split           | `test.train_test_split`             | Training and test DataFrames                       |
-| Test forecasts                  | `test.forecasts`                    | ypred aligned to y_true                            |
-| Test fitted values              | `test.fitted_values`                | In-sample fitted values, original scale            |
-| Test fitted values (model scale)| `test.fitted_values_model_scale`    | In-sample fitted values, transformed scale         |
-| Test metric values              | `test.metrics`                      | Per-series, grouped, and global metrics            |
-| Test instability flags          | `test.metric_instability_flags`     | Flags for degenerate metric computations           |
-| Test grouped metrics            | `test.metric_groups`                | Metrics by grouping columns                        |
-| Test origin                     | `test.test_origin`                  | Forecast origin date for test fold                 |
-| Test transform params           | `test.transform_params`             | Fitted/fixed parameters per series                 |
-| Test fitted model               | `test.fitted_model`                 | Serialized model (when enabled)                    |
-| **Shared metadata**             |                                     |                                                    |
-| Forecast horizon                | `horizon`                           | Fixed horizon for the run                          |
-| uv.lock                         | `uv_lock`                           | Dependency lockfile contents                       |
-| Git hash                        | `git_hash`                          | Code version identifier                            |
-| Run summary                     | `run_summary`                       | Success/failure/warning counts and details         |
+| Artifact                         | Source                           | Description                                 |
+| -------------------------------- | -------------------------------- | ------------------------------------------- |
+| YAML config                      | `config`                         | Full configuration for reproducibility      |
+| **CV artifacts**                 |                                  |                                             |
+| CV train/val splits              | `cv.train_val_splits_per_fold`   | Per-fold training and validation DataFrames |
+| CV forecasts                     | `cv.forecasts_per_fold`          | Per-fold ypred aligned to y_true            |
+| CV fitted values                 | `cv.fitted_values`               | In-sample fitted values, original scale     |
+| CV fitted values (model scale)   | `cv.fitted_values_model_scale`   | In-sample fitted values, transformed scale  |
+| CV metric values                 | `cv.metrics`                     | Per-series, grouped, and global metrics     |
+| CV instability flags             | `cv.metric_instability_flags`    | Flags for degenerate metric computations    |
+| CV grouped metrics               | `cv.metric_groups`               | Metrics by grouping columns                 |
+| CV forecast origins              | `cv.fold_origins`                | Dates defining each CV fold                 |
+| CV transform params              | `cv.transform_params`            | Fitted/fixed parameters per fold per series |
+| CV fitted models                 | `cv.fitted_models`               | Serialized model per fold (when enabled)    |
+| **Test artifacts**               |                                  |                                             |
+| Test train/test split            | `test.train_test_split`          | Training and test DataFrames                |
+| Test forecasts                   | `test.forecasts`                 | ypred aligned to y_true                     |
+| Test fitted values               | `test.fitted_values`             | In-sample fitted values, original scale     |
+| Test fitted values (model scale) | `test.fitted_values_model_scale` | In-sample fitted values, transformed scale  |
+| Test metric values               | `test.metrics`                   | Per-series, grouped, and global metrics     |
+| Test instability flags           | `test.metric_instability_flags`  | Flags for degenerate metric computations    |
+| Test grouped metrics             | `test.metric_groups`             | Metrics by grouping columns                 |
+| Test origin                      | `test.test_origin`               | Forecast origin date for test fold          |
+| Test transform params            | `test.transform_params`          | Fitted/fixed parameters per series          |
+| Test fitted model                | `test.fitted_model`              | Serialized model (when enabled)             |
+| **Shared metadata**              |                                  |                                             |
+| Forecast horizon                 | `horizon`                        | Fixed horizon for the run                   |
+| uv.lock                          | `uv_lock`                        | Dependency lockfile contents                |
+| Git hash                         | `git_hash`                       | Code version identifier                     |
+| Run summary                      | `run_summary`                    | Success/failure/warning counts and details  |
 
 ______________________________________________________________________
 
