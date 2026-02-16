@@ -190,7 +190,7 @@ def small_num_bound():
     fall back to the formula to avoid test import failures during refactors.
     """
     try:
-        from m5_redux.tools.forecast.metrics import _SMALL_NUM_BOUND
+        from tsbricks.blocks.metrics import _SMALL_NUM_BOUND
 
         return _SMALL_NUM_BOUND
     except ImportError:
@@ -294,3 +294,9 @@ def y_true_shape_2d():
 @pytest.fixture
 def y_pred_shape_2d():
     return np.array([[1.0, 2.0, 3.0]])
+
+
+@pytest.fixture
+def y_pred_over(arr):
+    """Overpredicts y_true_simple by +1 each → positive bias."""
+    return arr([3, 5])
