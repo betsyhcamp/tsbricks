@@ -67,6 +67,10 @@ def _compute_diagnostics(
     fitted = df[fitted_col].to_numpy(dtype=float)
     residuals = actual - fitted
 
+    # Validate residuals before computing statistics
+    if np.isclose(np.std(residuals), 0, atol=1e-10):
+        raise ValueError("Residuals have near-zero variance; KDE is undefined.")
+
     # Compute ACF
     n = len(residuals)
     if nlags is None:
@@ -82,8 +86,6 @@ def _compute_diagnostics(
     )  # assume two sided 95%CI, normal distribution
 
     # Compute KDE
-    if np.isclose(np.std(residuals), 0, atol=1e-10):
-        raise ValueError("Residuals have near-zero variance; KDE is undefined.")
     kde = gaussian_kde(residuals)
     kde_x = np.linspace(residuals.min(), residuals.max(), 200)
     kde_y = kde(kde_x)
