@@ -172,6 +172,50 @@ def rmsse(
     return (value, mse, scale, False) if return_components else (value, False)
 
 
+def rmse(
+    y_true: Iterable[float],
+    y_pred: Iterable[float],
+    **kwargs: object,
+) -> float:
+    """Return the Root Mean Squared Error (RMSE) between actual and predicted values.
+
+    Args:
+        y_true: Actual (observed) values, 1-D.
+        y_pred: Predicted (forecast) values, 1-D, same length as ``y_true``.
+        **kwargs: Reserved for future extensibility. Passing any keyword
+            arguments currently raises ``NotImplementedError``.
+
+    Returns:
+        The RMSE as a float, or ``NaN`` if inputs are empty, non-finite,
+        or produce a non-finite result (overflow protection).
+
+    Raises:
+        ValueError: If ``y_true`` and ``y_pred`` are not 1-D arrays of the
+            same shape.
+        NotImplementedError: If any ``**kwargs`` are supplied.
+
+    Example:
+        >>> from tsbricks.blocks.metrics import rmse
+        >>> rmse([2, 4, 6], [1, 3, 5])
+        1.0
+    """
+    if kwargs:
+        raise NotImplementedError(
+            f"rmse() does not yet support keyword arguments: {set(kwargs)}"
+        )
+
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+
+    if _bad_numerator_inputs(y_true, y_pred):
+        return float("nan")
+
+    error = y_true - y_pred
+    mse = float(np.mean(error**2))
+
+    return _sanitize_value(np.sqrt(mse))
+
+
 def difference_scaled_bias(
     y_true: Iterable[float],
     y_pred: Iterable[float],
