@@ -168,9 +168,7 @@ def test_rmsse_perfect_forecast_is_zero(
 
 def test_rmsse_known_value(y_true_simple, y_pred_simple, y_train_unit_diffs):
     """RMSSE is 1.0 for errors=[-1,-1], MSE=1, scale=1."""
-    value, unstable = rmsse(
-        y_true_simple, y_pred_simple, y_train=y_train_unit_diffs
-    )
+    value, unstable = rmsse(y_true_simple, y_pred_simple, y_train=y_train_unit_diffs)
     assert value == pytest.approx(1.0)
     assert unstable is False
 
@@ -232,9 +230,7 @@ def test_rmsse_nonfinite_numerator_returns_nan(
 
 def test_rmsse_unstable_scale(y_true_simple, y_pred_simple, y_train_constant):
     """Constant y_train → unstable scale flagged True."""
-    value, unstable = rmsse(
-        y_true_simple, y_pred_simple, y_train=y_train_constant
-    )
+    value, unstable = rmsse(y_true_simple, y_pred_simple, y_train=y_train_constant)
     assert np.isnan(value)
     assert unstable is True
 
