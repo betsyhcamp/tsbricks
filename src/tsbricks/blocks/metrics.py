@@ -166,8 +166,8 @@ def rmsse(
     if is_bad_scale:
         return (np.nan, mse, np.nan, True) if return_components else (np.nan, True)
 
-    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
-        value = _sanitize_value(np.sqrt(mse) / scale)
+    # removed np.errstate which would suppress warnings
+    value = _sanitize_value(np.sqrt(mse) / scale)
 
     return (value, mse, scale, False) if return_components else (value, False)
 
@@ -303,9 +303,8 @@ def difference_scaled_bias(
         return (
             (np.nan, mean_error, np.nan, True) if return_components else (np.nan, True)
         )
-
-    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
-        value = _sanitize_value(mean_error / scale_val)
+    # removed np.errstate which would suppress warnings
+    value = _sanitize_value(mean_error / scale_val)
 
     return (
         (value, mean_error, scale_val, False) if return_components else (value, False)
