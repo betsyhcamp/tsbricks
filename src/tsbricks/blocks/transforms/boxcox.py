@@ -10,9 +10,16 @@ class BoxCoxTransform(BaseTransform):
     """Box-Cox transform wrapping ``coreforecast``.
 
     Fits an independent lambda per ``unique_id`` using
-    ``coreforecast.scalers.boxcox_lambda``.  The ``method`` (``"loglik"``
-    or ``"guerrero"``) and ``season_length`` parameters are forwarded
-    directly to ``coreforecast`` via ``**params``.
+    ``coreforecast.scalers.boxcox_lambda``.  The ``method`` and
+    ``season_length`` parameters are forwarded directly to
+    ``coreforecast`` via ``**params`` in ``fit_transform``.
+
+    Params:
+        method: Lambda selection method — ``"loglik"`` (maximum
+            log-likelihood) or ``"guerrero"`` (minimizes coefficient of
+            variation for subseries). Defaults to ``"loglik"``.
+        season_length: Seasonal period length. Required when
+            ``method="guerrero"``; ignored for ``"loglik"``.
     """
 
     def __init__(self) -> None:
