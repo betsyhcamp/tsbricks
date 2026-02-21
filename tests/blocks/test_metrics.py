@@ -204,8 +204,12 @@ def test_rmse_accepts_plain_lists():
 
 def test_rmse_overflow_returns_nan():
     """Overflow from huge squared errors → sanitized to NaN."""
-    big = np.finfo(float).max
-    assert np.isnan(rmse([big], [-big]))
+    big = np.finfo(np.float64).max
+    # Expect "big" to be large enough to cause overflow warning; silence warning
+    # but do not pass test if warning isn't raised.
+    with pytest.warns(RuntimeWarning, match="overflow"):
+        result = rmse([big], [-big])
+    assert np.isnan(result)
 
 
 # =====================================================================
