@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from tsbricks.runner.transform_pipeline import (
     apply_transforms,
@@ -25,136 +24,113 @@ class _TransformConfig:
     params: dict | None = field(default=None)
 
 
-# ---- Fixtures ----
+# ---- fit_transforms ----
 
 
-@pytest.fixture
-def panel_df() -> pd.DataFrame:
-    """Synthetic panel with 2 series, strictly positive values."""
-    n = 12
-    dates = pd.date_range("2020-01-01", periods=n, freq="MS")
-    df_a = pd.DataFrame(
-        {
-            "unique_id": "A",
-            "ds": dates,
-            "y": np.arange(10, 10 + n, dtype=float),
-        }
+def test_fit_single_boxcox_transform(panel_df: pd.DataFrame) -> None:
+    """fit_transforms with one BoxCox config returns fitted transform and changed data."""
+    cfg = _TransformConfig(
+        class_path="tsbricks.blocks.transforms.BoxCoxTransform",
+        params={"method": "loglik"},
     )
-    df_b = pd.DataFrame(
-        {
-            "unique_id": "B",
-            "ds": dates,
-            "y": np.arange(1, 1 + n, dtype=float) ** 2 * 50,
-        }
+    fitted, transformed_df = fit_transforms(panel_df, [cfg])
+
+    assert len(fitted) == 1
+    assert set(transformed_df.columns) == set(panel_df.columns)
+    # Values should have changed (transformed)
+    assert not np.allclose(transformed_df["y"].to_numpy(), panel_df["y"].to_numpy())
+
+
+def test_fit_empty_transform_list(panel_df: pd.DataFrame) -> None:
+    """Empty config list returns original DataFrame unchanged."""
+    fitted, result_df = fit_transforms(panel_df, [])
+
+    assert len(fitted) == 0
+    pd.testing.assert_frame_equal(result_df, panel_df)
+
+
+def test_fit_perform_inverse_flag_stored(panel_df: pd.DataFrame) -> None:
+    """fit_transforms stores _perform_inverse on each transform instance."""
+    cfg = _TransformConfig(
+        class_path="tsbricks.blocks.transforms.BoxCoxTransform",
+        perform_inverse_transform=False,
+        params={"method": "loglik"},
     )
-    return pd.concat([df_a, df_b], ignore_index=True)
+    fitted, _ = fit_transforms(panel_df, [cfg])
+
+    assert fitted[0]._perform_inverse is False  # type: ignore[attr-defined]
 
 
-# ---- Tests ----
+# ---- apply_transforms ----
 
 
-class TestFitTransforms:
-    """Tests for fit_transforms."""
+def test_apply_matches_fit(panel_df: pd.DataFrame) -> None:
+    """apply_transforms on the same data produces the same result as fit_transform."""
+    cfg = _TransformConfig(
+        class_path="tsbricks.blocks.transforms.BoxCoxTransform",
+        params={"method": "loglik"},
+    )
+    fitted, transformed_via_fit = fit_transforms(panel_df, [cfg])
+    transformed_via_apply = apply_transforms(panel_df, fitted)
 
-    def test_single_boxcox_transform(self, panel_df: pd.DataFrame) -> None:
-        """fit_transforms with one BoxCox config returns fitted transform and changed data."""
-        cfg = _TransformConfig(
-            class_path="tsbricks.blocks.transforms.BoxCoxTransform",
-            params={"method": "loglik"},
-        )
-        fitted, transformed_df = fit_transforms(panel_df, [cfg])
-
-        assert len(fitted) == 1
-        assert set(transformed_df.columns) == set(panel_df.columns)
-        # Values should have changed (transformed)
-        assert not np.allclose(transformed_df["y"].values, panel_df["y"].values)
-
-    def test_empty_transform_list(self, panel_df: pd.DataFrame) -> None:
-        """Empty config list returns original DataFrame unchanged."""
-        fitted, result_df = fit_transforms(panel_df, [])
-
-        assert len(fitted) == 0
-        pd.testing.assert_frame_equal(result_df, panel_df)
-
-    def test_perform_inverse_flag_stored(self, panel_df: pd.DataFrame) -> None:
-        """fit_transforms stores _perform_inverse on each transform instance."""
-        cfg = _TransformConfig(
-            class_path="tsbricks.blocks.transforms.BoxCoxTransform",
-            perform_inverse_transform=False,
-            params={"method": "loglik"},
-        )
-        fitted, _ = fit_transforms(panel_df, [cfg])
-
-        assert fitted[0]._perform_inverse is False  # type: ignore[attr-defined]
+    np.testing.assert_allclose(
+        transformed_via_apply["y"].to_numpy(),
+        transformed_via_fit["y"].to_numpy(),
+        rtol=1e-12,
+    )
 
 
-class TestApplyTransforms:
-    """Tests for apply_transforms."""
-
-    def test_apply_matches_fit(self, panel_df: pd.DataFrame) -> None:
-        """apply_transforms on the same data produces the same result as fit_transform."""
-        cfg = _TransformConfig(
-            class_path="tsbricks.blocks.transforms.BoxCoxTransform",
-            params={"method": "loglik"},
-        )
-        fitted, transformed_via_fit = fit_transforms(panel_df, [cfg])
-        transformed_via_apply = apply_transforms(panel_df, fitted)
-
-        np.testing.assert_allclose(
-            transformed_via_apply["y"].values,
-            transformed_via_fit["y"].values,
-            rtol=1e-12,
-        )
-
-    def test_empty_transform_list(self, panel_df: pd.DataFrame) -> None:
-        """Empty fitted list returns DataFrame unchanged."""
-        result = apply_transforms(panel_df, [])
-        pd.testing.assert_frame_equal(result, panel_df)
+def test_apply_empty_transform_list(panel_df: pd.DataFrame) -> None:
+    """Empty fitted list returns DataFrame unchanged."""
+    result = apply_transforms(panel_df, [])
+    pd.testing.assert_frame_equal(result, panel_df)
 
 
-class TestInverseTransforms:
-    """Tests for inverse_transforms."""
+# ---- inverse_transforms ----
 
-    def test_round_trip(self, panel_df: pd.DataFrame) -> None:
-        """fit → apply → inverse ≈ original values."""
-        cfg = _TransformConfig(
-            class_path="tsbricks.blocks.transforms.BoxCoxTransform",
-            params={"method": "loglik"},
-        )
-        fitted, transformed_df = fit_transforms(panel_df, [cfg])
 
-        # Simulate forecast output: rename y → ypred
-        forecast_df = transformed_df.rename(columns={"y": "ypred"})
-        recovered = inverse_transforms(forecast_df, fitted)
+def test_inverse_round_trip(panel_df: pd.DataFrame) -> None:
+    """fit → apply → inverse ≈ original values."""
+    cfg = _TransformConfig(
+        class_path="tsbricks.blocks.transforms.BoxCoxTransform",
+        params={"method": "loglik"},
+    )
+    fitted, transformed_df = fit_transforms(panel_df, [cfg])
 
-        np.testing.assert_allclose(
-            recovered["ypred"].values,
-            panel_df["y"].values,
-            rtol=1e-10,
-        )
+    # Simulate forecast output: rename y → ypred
+    forecast_df = transformed_df.rename(columns={"y": "ypred"})
+    recovered = inverse_transforms(forecast_df, fitted)
 
-    def test_skips_when_flag_is_false(self, panel_df: pd.DataFrame) -> None:
-        """inverse_transforms skips transforms with _perform_inverse=False."""
-        cfg = _TransformConfig(
-            class_path="tsbricks.blocks.transforms.BoxCoxTransform",
-            perform_inverse_transform=False,
-            params={"method": "loglik"},
-        )
-        fitted, transformed_df = fit_transforms(panel_df, [cfg])
+    np.testing.assert_allclose(
+        recovered["ypred"].to_numpy(),
+        panel_df["y"].to_numpy(),
+        rtol=1e-10,
+    )
 
-        # Simulate forecast output
-        forecast_df = transformed_df.rename(columns={"y": "ypred"})
-        result = inverse_transforms(forecast_df, fitted)
 
-        # Should NOT have inverse-transformed — values stay transformed
-        np.testing.assert_allclose(
-            result["ypred"].values,
-            transformed_df["y"].values,
-            rtol=1e-12,
-        )
+def test_inverse_skips_when_flag_is_false(panel_df: pd.DataFrame) -> None:
+    """inverse_transforms skips transforms with _perform_inverse=False."""
+    cfg = _TransformConfig(
+        class_path="tsbricks.blocks.transforms.BoxCoxTransform",
+        perform_inverse_transform=False,
+        params={"method": "loglik"},
+    )
+    fitted, transformed_df = fit_transforms(panel_df, [cfg])
 
-    def test_empty_transform_list(self, panel_df: pd.DataFrame) -> None:
-        """Empty fitted list returns forecast DataFrame unchanged."""
-        forecast_df = panel_df.rename(columns={"y": "ypred"})
-        result = inverse_transforms(forecast_df, [])
-        pd.testing.assert_frame_equal(result, forecast_df)
+    # Simulate forecast output
+    forecast_df = transformed_df.rename(columns={"y": "ypred"})
+    result = inverse_transforms(forecast_df, fitted)
+
+    # Should NOT have inverse-transformed — values stay transformed
+    np.testing.assert_allclose(
+        result["ypred"].to_numpy(),
+        transformed_df["y"].to_numpy(),
+        rtol=1e-12,
+    )
+
+
+def test_inverse_empty_transform_list(panel_df: pd.DataFrame) -> None:
+    """Empty fitted list returns forecast DataFrame unchanged."""
+    forecast_df = panel_df.rename(columns={"y": "ypred"})
+    result = inverse_transforms(forecast_df, [])
+    pd.testing.assert_frame_equal(result, forecast_df)
