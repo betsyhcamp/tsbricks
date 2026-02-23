@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from tsbricks.backtesting.cross_validation import generate_folds
 from tsbricks.backtesting.schema import CrossValidationConfig
@@ -165,3 +166,16 @@ def test_fold_keys_zero_padded_for_11_folds(data_config):
     keys = list(folds.keys())
     assert keys[0] == "fold_00"
     assert keys[10] == "fold_10"
+
+
+# ---- input validation ----
+
+
+def test_non_datetime_ds_raises(data_config):
+    """String ds column raises ValueError with a clear message."""
+    df = pd.DataFrame(
+        {"unique_id": ["A", "A"], "ds": ["2023-01-01", "2023-02-01"], "y": [1.0, 2.0]}
+    )
+
+    with pytest.raises(ValueError, match="datetime dtype"):
+        generate_folds(df, _cv_config(["2023-01-01"]), data_config)

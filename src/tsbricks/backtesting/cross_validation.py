@@ -32,6 +32,9 @@ def generate_folds(
         chronologically by origin date (``fold_0`` has the earliest origin).
         The second element is ``None`` (no test fold in V1).
     """
+    if not pd.api.types.is_datetime64_any_dtype(df["ds"]):
+        raise ValueError("The 'ds' column must be datetime dtype.")
+
     origins = sorted(pd.Timestamp(o) for o in cv_config.forecast_origins)
     offset = pd.tseries.frequencies.to_offset(data_config.freq)
 
