@@ -1,5 +1,8 @@
 # tsbricks
 
+![CI](https://github.com/betsyhcamp/tsbricks/actions/workflows/ci.yml/badge.svg?branch=main)
+![Python 3.11](https://img.shields.io/badge/python-3.11-blue)
+
 Time series forecasting building blocks and a configuration-driven backtesting system for cross-validated forecast evaluation.
 
 ## Overview
