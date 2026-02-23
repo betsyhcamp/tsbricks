@@ -23,8 +23,8 @@ class CrossValidationConfig(BaseModel):
     """Cross-validation section (explicit mode only in V1)."""
 
     mode: Literal["explicit"]
-    horizon: int
-    forecast_origins: list[str]
+    horizon: int = Field(gt=0)
+    forecast_origins: list[str] = Field(min_length=1)
 
     # Future: parametric mode fields
     n_folds: int | None = None
@@ -122,6 +122,8 @@ def parse_config(
 
     if config_path is not None:
         raw = yaml.safe_load(Path(config_path).read_text())
+        if raw is None:
+            raise ValueError(f"YAML file is empty: {config_path}")
     else:
         raw = config
 
