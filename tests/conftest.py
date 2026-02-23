@@ -58,25 +58,42 @@ def sample_arrow_table() -> pa.Table:
     return pa.table({"col1": [1, 2, 4], "col2": ["a", "b", "c"]})
 
 
-# ------- Fixtures for testing Pydandtic schemas that validate config.yaml ---------
+# ------- Fixtures for testing backtest config Pydantic schemas ---------
 @pytest.fixture
 def valid_cfg() -> dict:
-    "Minimal valid config to reuse across tests"
+    """Minimal valid backtest config dict to reuse across tests."""
     return {
-        "project_settings": {"project_id": "myproj-123", "location": "US"},
-        "ml_data_input": {
-            "input_query_name": "input.sql",
-            "input_parameters": {"table": "foo"},
-            "curated_input_query_name": "curated.sql",
-            "curated_parameters": {"table": "bar"},
+        "data": {"freq": "MS"},
+        "cross_validation": {
+            "mode": "explicit",
+            "horizon": 6,
+            "forecast_origins": ["2023-01-01", "2023-07-01"],
         },
-        "ml_data_output": {
-            "output_query_name": "out.sql",
-            "output_parameters": {"dest": "baz"},
-            "most_recent_output": "latest.sql",
+        "transforms": [
+            {
+                "name": "box_cox",
+                "class": "tsbricks.blocks.transforms.BoxCoxTransform",
+                "scope": "per_series",
+                "targets": ["y"],
+                "perform_inverse_transform": True,
+                "params": {"method": "guerrero", "season_length": 12},
+            }
+        ],
+        "model": {
+            "callable": "tsbricks._testing.dummy_models.forecast_only",
+            "hyperparameters": {},
         },
-        "forecast": {"horizon": 4, "freq": "M", "n_jobs": 1},
-        "model": {"model_name": "AutoARIMA", "model_params": {"season_length": 12}},
+        "metrics": {
+            "definitions": [
+                {
+                    "name": "rmse",
+                    "callable": "tsbricks.blocks.metrics.rmse",
+                    "type": "simple",
+                    "scope": "per_series",
+                    "aggregation": "per_fold_mean",
+                }
+            ],
+        },
     }
 
 
