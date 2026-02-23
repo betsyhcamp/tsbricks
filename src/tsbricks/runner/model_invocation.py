@@ -11,14 +11,14 @@ def resolve_model(model_config: Any) -> tuple[Any, dict]:
     """Resolve a model callable from config.
 
     Dynamically imports the function specified by
-    ``model_config.callable`` and extracts hyperparameters.
+    ``model_config.callable`` and extracts hyperparameters
 
     Args:
         model_config: Config object with at least ``callable: str``
-            and ``hyperparameters: dict | None``.
+            and ``hyperparameters: dict | None``
 
     Returns:
-        ``(model_fn, hyperparameters)`` — the callable and its kwargs.
+        ``(model_fn, hyperparameters)`` the callable and its kwargs.
     """
     model_fn = dynamic_import(model_config.callable)
     hyperparameters = model_config.hyperparameters or {}
@@ -31,17 +31,17 @@ def invoke_model(
     horizon: int,
     future_x_df: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame | None, Any | None]:
-    """Run a model callable and normalise its return value.
+    """Run a model callable and normalize its return value.
 
     The model callable must accept ``(train_df, horizon, **kwargs)``
     and may return one of three shapes:
 
-    * ``DataFrame`` — forecast only.
-    * ``(DataFrame, DataFrame)`` — forecast + fitted values.
-    * ``(DataFrame, DataFrame, object)`` — forecast + fitted values
+    * ``DataFrame``  forecast only.
+    * ``(DataFrame, DataFrame)``  forecast + fitted values.
+    * ``(DataFrame, DataFrame, object)``  forecast + fitted values
       + model object.
 
-    This function normalises all three into a consistent 3-tuple.
+    This function normalizes all three into a consistent 3-tuple
 
     Args:
         train_df: Training panel DataFrame.
