@@ -11,6 +11,8 @@ from tsbricks.blocks.metrics import (
     _sanitize_value,
     _SMALL_NUM_BOUND,
     difference_scale,
+    rmse,
+    wape,
     rmsse,
     difference_scaled_bias,
 )
@@ -148,6 +150,134 @@ def test_difference_scale_invalid_scale_stat_raises(y_train_unit_diffs):
     """Raises ValueError for unrecognized scale_stat."""
     with pytest.raises(ValueError, match="scale_stat must be"):
         difference_scale(y_train_unit_diffs, m=1, scale_stat="bad")
+
+
+# =====================================================================
+# rmse
+# =====================================================================
+
+
+def test_rmse_known_value(y_true_simple, y_pred_simple):
+    """RMSE is 1.0 for errors [-1, -1]."""
+    np.testing.assert_allclose(rmse(y_true_simple, y_pred_simple), 1.0)
+
+
+def test_rmse_perfect_prediction(y_true_zero_error, y_pred_zero_error):
+    """RMSE is 0.0 when forecast matches actuals exactly."""
+    np.testing.assert_allclose(
+        rmse(y_true_zero_error, y_pred_zero_error), 0.0, atol=1e-15
+    )
+
+
+def test_rmse_nonfinite_returns_nan(y_true_nonfinite, y_pred_nonfinite_pair):
+    """NaN in y_true → returns NaN."""
+    assert np.isnan(rmse(y_true_nonfinite, y_pred_nonfinite_pair))
+
+
+def test_rmse_empty_arrays_returns_nan(arr):
+    """Empty input arrays → returns NaN."""
+    assert np.isnan(rmse(arr([]), arr([])))
+
+
+def test_rmse_shape_mismatch_raises(arr):
+    """Raises ValueError when array lengths differ."""
+    with pytest.raises(ValueError, match="1D arrays of same shape"):
+        rmse(arr([1, 2]), arr([1, 2, 3]))
+
+
+def test_rmse_2d_input_raises(y_true_shape_2d, y_pred_shape_2d):
+    """Raises ValueError for 2D input arrays."""
+    with pytest.raises(ValueError, match="1D arrays of same shape"):
+        rmse(y_true_shape_2d, y_pred_shape_2d)
+
+
+def test_rmse_kwargs_raises():
+    """Raises NotImplementedError when **kwargs are supplied."""
+    with pytest.raises(NotImplementedError, match="does not yet support"):
+        rmse([1, 2], [1, 2], axis=0)
+
+
+def test_rmse_accepts_plain_lists():
+    """Coerces plain Python lists via np.asarray."""
+    np.testing.assert_allclose(rmse([0, 0], [1, 1]), 1.0)
+
+
+def test_rmse_overflow_returns_nan():
+    """Overflow from huge squared errors → sanitized to NaN."""
+    big = np.finfo(np.float64).max
+    # Expect "big" to be large enough to cause overflow warning; silence warning
+    # but do not pass test if warning isn't raised.
+    with pytest.warns(RuntimeWarning, match="overflow"):
+        result = rmse([big], [-big])
+    assert np.isnan(result)
+
+
+# =====================================================================
+# wape
+# =====================================================================
+
+
+def test_wape_known_value(y_true_simple, y_pred_simple):
+    """WAPE is 1/3 for errors [1, 1] over sum(|y_true|)=6."""
+    # y_true=[2,4], y_pred=[1,3] → num=|1|+|1|=2, denom=2+4=6
+    np.testing.assert_allclose(wape(y_true_simple, y_pred_simple), 2.0 / 6.0)
+
+
+def test_wape_perfect_prediction(y_true_zero_error, y_pred_zero_error):
+    """WAPE is 0.0 when forecast matches actuals exactly."""
+    np.testing.assert_allclose(
+        wape(y_true_zero_error, y_pred_zero_error), 0.0, atol=1e-15
+    )
+
+
+def test_wape_all_zero_actuals_returns_nan(arr):
+    """All-zero y_true → denominator zero → NaN."""
+    assert np.isnan(wape(arr([0.0, 0.0, 0.0]), arr([1.0, 2.0, 3.0])))
+
+
+def test_wape_near_zero_denominator_returns_nan(arr, eps_tiny):
+    """Denominator below _SMALL_NUM_BOUND → NaN."""
+    assert np.isnan(wape(arr([eps_tiny, eps_tiny]), arr([0.0, 0.0])))
+
+
+def test_wape_negative_actuals(arr):
+    """Denominator uses abs(y_true), not raw y_true."""
+    # y_true=[-2,-4], y_pred=[-1,-3] → num=|1|+|1|=2, denom=2+4=6
+    np.testing.assert_allclose(wape(arr([-2, -4]), arr([-1, -3])), 2.0 / 6.0)
+
+
+def test_wape_nonfinite_returns_nan(y_true_nonfinite, y_pred_nonfinite_pair):
+    """NaN in y_true → returns NaN."""
+    assert np.isnan(wape(y_true_nonfinite, y_pred_nonfinite_pair))
+
+
+def test_wape_empty_arrays_returns_nan(arr):
+    """Empty input arrays → returns NaN."""
+    assert np.isnan(wape(arr([]), arr([])))
+
+
+def test_wape_shape_mismatch_raises(arr):
+    """Raises ValueError when array lengths differ."""
+    with pytest.raises(ValueError, match="1D arrays of same shape"):
+        wape(arr([1, 2, 3]), arr([1, 2]))
+
+
+def test_wape_2d_input_raises(y_true_shape_2d, y_pred_shape_2d):
+    """Raises ValueError for 2D input arrays."""
+    with pytest.raises(ValueError, match="1D arrays of same shape"):
+        wape(y_true_shape_2d, y_pred_shape_2d)
+
+
+def test_wape_kwargs_raises():
+    """Raises NotImplementedError when **kwargs are supplied."""
+    with pytest.raises(NotImplementedError, match="does not yet support"):
+        wape([1, 2], [1, 2], foo=123)
+
+
+def test_wape_accepts_plain_lists():
+    """Coerces plain Python lists via np.asarray."""
+    # num=|10|+|10|+|20|=40, denom=100+200+300=600 → 40/600
+    np.testing.assert_allclose(wape([100, 200, 300], [110, 190, 280]), 40.0 / 600.0)
 
 
 # =====================================================================

@@ -166,10 +166,54 @@ def rmsse(
     if is_bad_scale:
         return (np.nan, mse, np.nan, True) if return_components else (np.nan, True)
 
-    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
-        value = _sanitize_value(np.sqrt(mse) / scale)
+    # removed np.errstate which would suppress warnings
+    value = _sanitize_value(np.sqrt(mse) / scale)
 
     return (value, mse, scale, False) if return_components else (value, False)
+
+
+def rmse(
+    y_true: Iterable[float],
+    y_pred: Iterable[float],
+    **kwargs: object,
+) -> float:
+    """Return the Root Mean Squared Error (RMSE) between actual and predicted values.
+
+    Args:
+        y_true: Actual (observed) values, 1-D.
+        y_pred: Predicted (forecast) values, 1-D, same length as ``y_true``.
+        **kwargs: Reserved for future extensibility. Passing any keyword
+            arguments currently raises ``NotImplementedError``.
+
+    Returns:
+        The RMSE as a float, or ``NaN`` if inputs are empty, non-finite,
+        or produce a non-finite result (overflow protection).
+
+    Raises:
+        ValueError: If ``y_true`` and ``y_pred`` are not 1-D arrays of the
+            same shape.
+        NotImplementedError: If any ``**kwargs`` are supplied.
+
+    Example:
+        >>> from tsbricks.blocks.metrics import rmse
+        >>> rmse([2, 4, 6], [1, 3, 5])
+        1.0
+    """
+    if kwargs:
+        raise NotImplementedError(
+            f"rmse() does not yet support keyword arguments: {set(kwargs)}"
+        )
+
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+
+    if _bad_numerator_inputs(y_true, y_pred):
+        return float("nan")
+
+    error = y_true - y_pred
+    mse = float(np.mean(error**2))
+
+    return _sanitize_value(np.sqrt(mse))
 
 
 def difference_scaled_bias(
@@ -259,10 +303,59 @@ def difference_scaled_bias(
         return (
             (np.nan, mean_error, np.nan, True) if return_components else (np.nan, True)
         )
-
-    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
-        value = _sanitize_value(mean_error / scale_val)
+    # removed np.errstate which would suppress warnings
+    value = _sanitize_value(mean_error / scale_val)
 
     return (
         (value, mean_error, scale_val, False) if return_components else (value, False)
     )
+
+
+def wape(
+    y_true: Iterable[float],
+    y_pred: Iterable[float],
+    **kwargs: object,
+) -> float:
+    """Return the Weighted Absolute Percentage Error (WAPE).
+
+    WAPE = sum(|y_true - y_pred|) / sum(|y_true|). Aggregates absolute
+    errors before dividing, avoiding per-observation division-by-zero.
+
+    Args:
+        y_true: Actual (observed) values, 1-D.
+        y_pred: Predicted (forecast) values, 1-D, same length as ``y_true``.
+        **kwargs: Reserved for future extensibility. Passing any keyword
+            arguments currently raises ``NotImplementedError``.
+
+    Returns:
+        The WAPE as a float, or ``NaN`` if inputs are empty, non-finite,
+        or ``sum(|y_true|)`` is zero/near-zero.
+
+    Raises:
+        ValueError: If ``y_true`` and ``y_pred`` are not 1-D arrays of the
+            same shape.
+        NotImplementedError: If any ``**kwargs`` are supplied.
+
+    Example:
+        >>> from tsbricks.blocks.metrics import wape
+        >>> wape([100, 200], [110, 190])
+        0.1
+    """
+    if kwargs:
+        raise NotImplementedError(
+            f"wape() does not yet support keyword arguments: {set(kwargs)}"
+        )
+
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+
+    if _bad_numerator_inputs(y_true, y_pred):
+        return float("nan")
+
+    numerator = float(np.sum(np.abs(y_true - y_pred)))
+    denominator = float(np.sum(np.abs(y_true)))
+
+    if _scale_is_invalid(denominator):
+        return float("nan")
+
+    return _sanitize_value(numerator / denominator)
