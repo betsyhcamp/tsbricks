@@ -23,48 +23,97 @@ def test_parse_config_no_args_raises() -> None:
         parse_config()
 
 
-# ---- parse_config from dict ----
+# ---- parse_config from dict: data section ----
 
 
-def test_parse_config_from_valid_dict(valid_cfg: dict) -> None:
-    """A valid dict parses into a BacktestConfig without error."""
+def test_parse_valid_dict_data_section(valid_cfg: dict) -> None:
+    """Valid dict parses into a BacktestConfig with correct data fields."""
     cfg = parse_config(config=valid_cfg)
 
     assert isinstance(cfg, BacktestConfig)
     assert cfg.data.freq == "MS"
+
+
+def test_parse_valid_dict_cv_section(valid_cfg: dict) -> None:
+    """Valid dict parses cross_validation section correctly."""
+    cfg = parse_config(config=valid_cfg)
+
     assert cfg.cross_validation.mode == "explicit"
     assert cfg.cross_validation.horizon == 6
     assert len(cfg.cross_validation.forecast_origins) == 2
+
+
+def test_parse_valid_dict_model_section(valid_cfg: dict) -> None:
+    """Valid dict parses model section correctly."""
+    cfg = parse_config(config=valid_cfg)
+
     assert cfg.model.callable == "tsbricks._testing.dummy_models.forecast_only"
+
+
+def test_parse_valid_dict_metrics_section(valid_cfg: dict) -> None:
+    """Valid dict parses metrics section correctly."""
+    cfg = parse_config(config=valid_cfg)
+
     assert len(cfg.metrics.definitions) == 1
     assert cfg.metrics.definitions[0].name == "rmse"
 
 
-def test_parse_config_defaults(valid_cfg: dict) -> None:
-    """Default values are applied for optional fields."""
+# ---- defaults by config model ----
+
+
+def test_data_config_defaults(valid_cfg: dict) -> None:
+    """DataConfig applies correct defaults for optional column names."""
     cfg = parse_config(config=valid_cfg)
 
     assert cfg.data.target_col == "y"
     assert cfg.data.date_col == "ds"
     assert cfg.data.id_col == "unique_id"
     assert cfg.data.exogenous_columns is None
+
+
+def test_model_config_defaults(valid_cfg: dict) -> None:
+    """ModelConfig applies correct defaults for optional fields."""
+    cfg = parse_config(config=valid_cfg)
+
     assert cfg.model.hyperparameters == {}
     assert cfg.model.model_n_jobs is None
     assert cfg.model.serialization is None
+
+
+def test_backtest_config_optional_defaults(valid_cfg: dict) -> None:
+    """Top-level optional sections default to None."""
+    cfg = parse_config(config=valid_cfg)
+
     assert cfg.test is None
     assert cfg.parallelization is None
     assert cfg.artifact_storage is None
 
 
-def test_parse_config_transform_fields(valid_cfg: dict) -> None:
-    """Transform config fields are parsed correctly from the class alias."""
+# ---- transform config parsing ----
+
+
+def test_parse_config_transform_count(valid_cfg: dict) -> None:
+    """Config with one transform has a single-element transforms list."""
     cfg = parse_config(config=valid_cfg)
 
     assert cfg.transforms is not None
     assert len(cfg.transforms) == 1
-    t = cfg.transforms[0]
+
+
+def test_transform_class_alias_from_dict(valid_cfg: dict) -> None:
+    """The ``class`` key in the dict maps to TransformConfig.class_path."""
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.transforms is not None
+    assert cfg.transforms[0].class_path == "tsbricks.blocks.transforms.BoxCoxTransform"
+
+
+def test_transform_config_fields(valid_cfg: dict) -> None:
+    """Transform config fields are parsed with correct values."""
+    cfg = parse_config(config=valid_cfg)
+    t = cfg.transforms[0]  # type: ignore[index]
+
     assert t.name == "box_cox"
-    assert t.class_path == "tsbricks.blocks.transforms.BoxCoxTransform"
     assert t.scope == "per_series"
     assert t.targets == ["y"]
     assert t.perform_inverse_transform is True
@@ -96,79 +145,18 @@ def test_parse_config_from_yaml(valid_cfg: dict, tmp_path) -> None:
     assert cfg.cross_validation.horizon == 6
 
 
-def test_parse_config_yaml_class_alias(tmp_path) -> None:
-    """The YAML ``class:`` key maps to TransformConfig.class_path."""
-    import yaml
-
-    raw = {
-        "data": {"freq": "MS"},
-        "cross_validation": {
-            "mode": "explicit",
-            "horizon": 3,
-            "forecast_origins": ["2023-06-01"],
-        },
-        "transforms": [
-            {
-                "name": "box_cox",
-                "class": "tsbricks.blocks.transforms.BoxCoxTransform",
-                "targets": ["y"],
-            }
-        ],
-        "model": {"callable": "some.module.func"},
-        "metrics": {
-            "definitions": [
-                {
-                    "name": "rmse",
-                    "callable": "tsbricks.blocks.metrics.rmse",
-                    "type": "simple",
-                }
-            ]
-        },
-    }
-    yaml_path = tmp_path / "config.yaml"
-    yaml_path.write_text(yaml.dump(raw))
-
-    cfg = parse_config(config_path=str(yaml_path))
-
-    assert cfg.transforms is not None
-    assert cfg.transforms[0].class_path == "tsbricks.blocks.transforms.BoxCoxTransform"
-
-
 # ---- class_path via Python name (populate_by_name) ----
 
 
-def test_transform_config_class_path_by_name() -> None:
+def test_transform_config_class_path_by_name(valid_cfg: dict) -> None:
     """TransformConfig accepts class_path= when constructing from Python."""
-    cfg = parse_config(
-        config={
-            "data": {"freq": "D"},
-            "cross_validation": {
-                "mode": "explicit",
-                "horizon": 1,
-                "forecast_origins": ["2024-01-01"],
-            },
-            "transforms": [
-                {
-                    "name": "test",
-                    "class_path": "some.module.Transform",
-                    "targets": ["y"],
-                }
-            ],
-            "model": {"callable": "some.module.func"},
-            "metrics": {
-                "definitions": [
-                    {
-                        "name": "m",
-                        "callable": "some.module.metric",
-                        "type": "simple",
-                    }
-                ]
-            },
-        }
-    )
+    transform = valid_cfg["transforms"][0]
+    transform["class_path"] = transform.pop("class")
+
+    cfg = parse_config(config=valid_cfg)
 
     assert cfg.transforms is not None
-    assert cfg.transforms[0].class_path == "some.module.Transform"
+    assert cfg.transforms[0].class_path == "tsbricks.blocks.transforms.BoxCoxTransform"
 
 
 # ---- Validation errors for missing required fields ----
@@ -220,6 +208,39 @@ def test_invalid_metric_type_raises(valid_cfg: dict) -> None:
 
     with pytest.raises(ValidationError):
         parse_config(config=valid_cfg)
+
+
+def test_horizon_zero_raises(valid_cfg: dict) -> None:
+    """horizon=0 is rejected by the schema."""
+    valid_cfg["cross_validation"]["horizon"] = 0
+
+    with pytest.raises(ValidationError):
+        parse_config(config=valid_cfg)
+
+
+def test_horizon_negative_raises(valid_cfg: dict) -> None:
+    """Negative horizon is rejected by the schema."""
+    valid_cfg["cross_validation"]["horizon"] = -1
+
+    with pytest.raises(ValidationError):
+        parse_config(config=valid_cfg)
+
+
+def test_empty_forecast_origins_raises(valid_cfg: dict) -> None:
+    """Empty forecast_origins list is rejected by the schema."""
+    valid_cfg["cross_validation"]["forecast_origins"] = []
+
+    with pytest.raises(ValidationError):
+        parse_config(config=valid_cfg)
+
+
+def test_empty_yaml_file_raises(tmp_path) -> None:
+    """An empty YAML file raises ValueError with a clear message."""
+    yaml_path = tmp_path / "empty.yaml"
+    yaml_path.write_text("")
+
+    with pytest.raises(ValueError, match="YAML file is empty"):
+        parse_config(config_path=str(yaml_path))
 
 
 # ---- Out-of-scope fields accepted as dicts ----
