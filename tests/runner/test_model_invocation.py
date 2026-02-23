@@ -95,9 +95,37 @@ def test_invoke_passes_hyperparameters(panel_df: pd.DataFrame) -> None:
     assert model_obj["hyperparameters"]["alpha"] == 0.5
 
 
+def test_invoke_forwards_future_x_df(panel_df: pd.DataFrame) -> None:
+    """future_x_df is forwarded to the model callable as a kwarg."""
+    cfg = _ModelConfig(
+        callable="tsbricks._testing.dummy_models.forecast_with_exogenous",
+    )
+    future_x = pd.DataFrame({"ds": [1], "unique_id": ["A"], "price": [9.99]})
+    _, _, model_obj = invoke_model(panel_df, cfg, horizon=3, future_x_df=future_x)
+
+    assert model_obj is not None
+    pd.testing.assert_frame_equal(model_obj["future_x_df"], future_x)
+
+
 def test_invoke_invalid_return_type_raises(panel_df: pd.DataFrame) -> None:
     """Model returning an unexpected type raises TypeError."""
     cfg = _ModelConfig(callable="tsbricks._testing.dummy_models.returns_int")
+
+    with pytest.raises(TypeError, match="Model callable must return"):
+        invoke_model(panel_df, cfg, horizon=3)
+
+
+def test_invoke_tuple_of_one_raises(panel_df: pd.DataFrame) -> None:
+    """Model returning a 1-tuple raises TypeError."""
+    cfg = _ModelConfig(callable="tsbricks._testing.dummy_models.returns_tuple_of_one")
+
+    with pytest.raises(TypeError, match="Model callable must return"):
+        invoke_model(panel_df, cfg, horizon=3)
+
+
+def test_invoke_tuple_of_four_raises(panel_df: pd.DataFrame) -> None:
+    """Model returning a 4-tuple raises TypeError."""
+    cfg = _ModelConfig(callable="tsbricks._testing.dummy_models.returns_tuple_of_four")
 
     with pytest.raises(TypeError, match="Model callable must return"):
         invoke_model(panel_df, cfg, horizon=3)

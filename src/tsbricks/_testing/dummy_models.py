@@ -43,6 +43,33 @@ def forecast_fitted_and_model(
     return forecast_df, fitted_df, model_object
 
 
+def forecast_with_exogenous(
+    train_df: pd.DataFrame, horizon: int, **kwargs: object
+) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """Return (forecast, fitted, model_object) with future_x_df echoed back."""
+    forecast_df, fitted_df = forecast_and_fitted(train_df, horizon)
+    model_object = {
+        "name": "dummy_exog",
+        "future_x_df": kwargs.get("future_x_df"),
+    }
+    return forecast_df, fitted_df, model_object
+
+
 def returns_int(train_df: pd.DataFrame, horizon: int, **kwargs: object) -> int:
     """Return an int — invalid return type for testing."""
     return 42
+
+
+def returns_tuple_of_one(
+    train_df: pd.DataFrame, horizon: int, **kwargs: object
+) -> tuple:
+    """Return a 1-tuple — invalid arity for testing."""
+    return (forecast_only(train_df, horizon, **kwargs),)
+
+
+def returns_tuple_of_four(
+    train_df: pd.DataFrame, horizon: int, **kwargs: object
+) -> tuple:
+    """Return a 4-tuple — invalid arity for testing."""
+    forecast_df, fitted_df = forecast_and_fitted(train_df, horizon, **kwargs)
+    return forecast_df, fitted_df, {"name": "dummy"}, "extra"
