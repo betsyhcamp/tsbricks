@@ -28,6 +28,11 @@ def evaluate_metrics(
         Long-format DataFrame with columns
         ``[metric_name, unique_id, fold, aggregation, value]``.
     """
+    resolved = [
+        (defn, dynamic_import(defn.callable), defn.params or {})
+        for defn in metrics_config.definitions
+    ]
+
     rows: list[dict] = []
 
     for uid in y_pred["unique_id"].unique():
@@ -35,10 +40,7 @@ def evaluate_metrics(
         y_pred_arr = y_pred.loc[y_pred["unique_id"] == uid, "ypred"].to_numpy()
         y_train_arr = y_train.loc[y_train["unique_id"] == uid, "y"].to_numpy()
 
-        for defn in metrics_config.definitions:
-            metric_fn = dynamic_import(defn.callable)
-            kwargs = defn.params or {}
-
+        for defn, metric_fn, kwargs in resolved:
             if defn.type == "simple":
                 result = metric_fn(y_true_arr, y_pred_arr, **kwargs)
             else:
