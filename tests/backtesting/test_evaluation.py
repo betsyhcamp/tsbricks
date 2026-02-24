@@ -28,54 +28,42 @@ RMSSE_DEF = {
 }
 
 
-@pytest.fixture
-def single_series_data():
-    """Single series where RMSE is hand-computable.
-
-    y_true=[2,4], y_pred=[1,3] → errors=[1,1] → MSE=1 → RMSE=1.0
-    y_train=[0,1,2,3] → diffs=[1,1,1] → scale=1.0 → RMSSE=1.0
-    """
-    y_true = pd.DataFrame({"unique_id": ["A", "A"], "ds": [1, 2], "y": [2.0, 4.0]})
-    y_pred = pd.DataFrame({"unique_id": ["A", "A"], "ds": [1, 2], "ypred": [1.0, 3.0]})
-    y_train = pd.DataFrame(
-        {
-            "unique_id": ["A", "A", "A", "A"],
-            "ds": [1, 2, 3, 4],
-            "y": [0.0, 1.0, 2.0, 3.0],
-        }
-    )
-    return y_true, y_pred, y_train
+def _to_panel(arr, uid="A", col="y"):
+    """Wrap a numpy array into a single-series DataFrame."""
+    n = len(arr)
+    return pd.DataFrame({"unique_id": [uid] * n, "ds": list(range(1, n + 1)), col: arr})
 
 
 @pytest.fixture
-def two_series_data():
-    """Two-series panel. Series B has different errors.
+def single_series_data(y_true_simple, y_pred_simple, y_train_unit_diffs):
+    """Single series reusing root conftest canonical arrays.
 
-    Series A: y_true=[2,4], y_pred=[1,3] → RMSE=1.0
-    Series B: y_true=[10,20], y_pred=[10,20] → RMSE=0.0
+    y_true=[2,4], y_pred=[1,3] → RMSE=1.0
+    y_train=[0,1,2,3] → scale=1.0 → RMSSE=1.0
     """
-    y_true = pd.DataFrame(
-        {
-            "unique_id": ["A", "A", "B", "B"],
-            "ds": [1, 2, 1, 2],
-            "y": [2.0, 4.0, 10.0, 20.0],
-        }
+    return (
+        _to_panel(y_true_simple, col="y"),
+        _to_panel(y_pred_simple, col="ypred"),
+        _to_panel(y_train_unit_diffs, col="y"),
     )
-    y_pred = pd.DataFrame(
-        {
-            "unique_id": ["A", "A", "B", "B"],
-            "ds": [1, 2, 1, 2],
-            "ypred": [1.0, 3.0, 10.0, 20.0],
-        }
+
+
+@pytest.fixture
+def two_series_data(y_true_simple, y_pred_simple, y_train_unit_diffs):
+    """Two-series panel. Series A reuses root conftest arrays. Series B has zero error."""
+    y_true_a = _to_panel(y_true_simple, uid="A", col="y")
+    y_pred_a = _to_panel(y_pred_simple, uid="A", col="ypred")
+    y_train_a = _to_panel(y_train_unit_diffs, uid="A", col="y")
+
+    y_true_b = _to_panel([10.0, 20.0], uid="B", col="y")
+    y_pred_b = _to_panel([10.0, 20.0], uid="B", col="ypred")
+    y_train_b = _to_panel([5.0, 10.0, 15.0, 20.0], uid="B", col="y")
+
+    return (
+        pd.concat([y_true_a, y_true_b], ignore_index=True),
+        pd.concat([y_pred_a, y_pred_b], ignore_index=True),
+        pd.concat([y_train_a, y_train_b], ignore_index=True),
     )
-    y_train = pd.DataFrame(
-        {
-            "unique_id": ["A", "A", "A", "A", "B", "B", "B", "B"],
-            "ds": [1, 2, 3, 4, 1, 2, 3, 4],
-            "y": [0.0, 1.0, 2.0, 3.0, 5.0, 10.0, 15.0, 20.0],
-        }
-    )
-    return y_true, y_pred, y_train
 
 
 # ---- output schema ----
