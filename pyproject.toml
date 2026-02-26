@@ -28,6 +28,7 @@ dependencies = [
 
 [project.optional-dependencies]
 matplotlib = ["matplotlib>=3.8"]
+notebooks = ["statsforecast>=2.0"]
 polars = ["polars>=1.0.0"]
 
 [dependency-groups]
@@ -44,6 +45,8 @@ dev = [
     "myst-parser",
     "pandas-stubs==2.3.3.*",
     "pytest-mock>=3.15.1",
+    "ipykernel",
+    "jupyterlab",
 ]
 
 [tool.hatch.build.targets.wheel]
