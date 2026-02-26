@@ -1,0 +1,34 @@
+data:
+  freq: "MS"
+
+cross_validation:
+  mode: explicit
+  horizon: 6
+  forecast_origins:
+    - "2023-01-01"
+    - "2023-06-01"
+
+transforms:
+  - name: box_cox
+    class: tsbricks.blocks.transforms.BoxCoxTransform
+    scope: per_series
+    targets: [y]
+    perform_inverse_transform: true
+    params:
+      method: guerrero
+      season_length: 12
+
+model:
+  callable: __main__.statsforecast_ets
+  hyperparameters:
+    season_length: 12
+    freq: "MS"
+
+metrics:
+  definitions:
+    - name: rmse
+      callable: tsbricks.blocks.metrics.rmse
+      type: simple
+    - name: rmsse
+      callable: tsbricks.blocks.metrics.rmsse
+      type: context_aware
