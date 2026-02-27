@@ -55,7 +55,7 @@ packages = ["src/tsbricks"]
 [tool.ruff]
 line-length = 88
 target-version = "py311"
-extend-exclude = ["*.md", ".venv"]
+extend-exclude = ["*.md", ".venv", "notebooks"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
