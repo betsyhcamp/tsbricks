@@ -257,3 +257,35 @@ def test_out_of_scope_fields_accepted(valid_cfg: dict) -> None:
     assert cfg.test == {"enabled": True, "test_origin": "2024-01-01"}
     assert cfg.parallelization == {"parallel_eval_strategy": "across_series"}
     assert cfg.artifact_storage == {"uv_lock_path": "./uv.lock"}
+
+
+# ---- Integer ds config ----
+
+
+def test_parse_valid_dict_integer_ds(valid_cfg: dict) -> None:
+    """Config with freq=1 and integer forecast_origins parses correctly."""
+    valid_cfg["data"]["freq"] = 1
+    valid_cfg["cross_validation"]["forecast_origins"] = [30, 40]
+
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.data.freq == 1
+    assert cfg.cross_validation.forecast_origins == [30, 40]
+
+
+def test_freq_int_not_one_raises(valid_cfg: dict) -> None:
+    """Integer freq other than 1 raises ValidationError."""
+    valid_cfg["data"]["freq"] = 2
+
+    with pytest.raises(ValidationError, match="Integer freq must be 1"):
+        parse_config(config=valid_cfg)
+
+
+def test_integer_forecast_origins_accepted(valid_cfg: dict) -> None:
+    """Integer forecast_origins parse correctly with freq=1."""
+    valid_cfg["data"]["freq"] = 1
+    valid_cfg["cross_validation"]["forecast_origins"] = [10, 20, 30]
+
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.cross_validation.forecast_origins == [10, 20, 30]

@@ -7,7 +7,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.19.1
 #   kernelspec:
-#     display_name: Python 3
+#     display_name: .venv (3.11.11)
 #     language: python
 #     name: python3
 # ---
@@ -25,6 +25,7 @@
 # %%
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 from tsbricks.backtesting import (
     BacktestResults,
@@ -41,7 +42,7 @@ from tsbricks.runner import (
 )
 
 # Generate a 3-series monthly panel (48 months, strictly positive)
-np.random.seed(42)
+np.random.seed(1027)
 dates = pd.date_range("2020-01-01", periods=48, freq="MS")
 
 series_params = {
@@ -66,13 +67,24 @@ print(f"Shape: {df.shape}")
 print(f"\nSeries counts:\n{df.groupby('unique_id').size()}")
 df.head(10)
 
+# %%
+for uid in df['unique_id'].unique():
+    temp=df[df['unique_id'] ==uid].copy()
+    fig, ax = plt.subplots(figsize=(9,3))
+    ax.plot(temp['ds'], temp['y'])
+    ax.set_title(f'Series {uid}')
+    ax.set_xlabel('Date')
+    ax.set_ylabel('y')
+    plt.tight_layout()
+    plt.show()
+
 
 # %% [markdown]
-# ## 2. Statsforecast Model Wrapper
+# ## 2. Define model callable: Statsforecast Model Wrapper
 
 # %%
 def statsforecast_ets(train_df, horizon, **kwargs):
-    """Thin wrapper around statsforecast AutoETS.
+    """Model callable: Thin wrapper around statsforecast AutoETS.
 
     Follows the tsbricks model callable convention:
     callable(train_df, horizon, **kwargs) -> DataFrame[ds, unique_id, ypred]
@@ -80,6 +92,7 @@ def statsforecast_ets(train_df, horizon, **kwargs):
     from statsforecast import StatsForecast
     from statsforecast.models import AutoETS
 
+    # get "season_length" and "freq" from kwargs and define defaults
     season_length = kwargs.get("season_length", 12)
     freq = kwargs.get("freq", "MS")
 
@@ -166,16 +179,51 @@ cv_folds, _ = generate_folds(
     df, backtest_config.cross_validation, backtest_config.data
 )
 
+# verify cross val folds available
+cv_folds.keys()
+
+# %%
+backtest_config.model.hyperparameters
+
+# %%
+backtest_config.model
+
+# %%
+cv_folds
+
+# %%
+# Do remaining inspection on fold_0
 train_df = cv_folds["fold_0"]["train"]
 val_df = cv_folds["fold_0"]["val"]
 print(f"Train shape: {train_df.shape}, Val shape: {val_df.shape}")
 
+# %%
 # Fit and apply transforms
 fitted_transforms, transformed_train = fit_transforms(
     train_df, backtest_config.transforms
 )
 transformed_val = apply_transforms(val_df, fitted_transforms)
 
+# %%
+transformed_train
+
+# %%
+
+# %%
+for uid in transformed_train['unique_id'].unique():
+    temp = transformed_train[transformed_train['unique_id'] == uid].copy()
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(temp['ds'], temp['y'])
+    ax.set_title(f"Series {uid}")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("y")
+    plt.tight_layout()
+    plt.show()
+
+# %%
+fitted_transforms
+
+# %%
 # Invoke model on transformed data
 forecast_df, _, _ = invoke_model(
     transformed_train,
@@ -184,12 +232,20 @@ forecast_df, _, _ = invoke_model(
 )
 
 # Inverse transform forecasts back to original scale
-forecast_original = inverse_transforms(forecast_df, fitted_transforms)
+forecast_original_scale = inverse_transforms(forecast_df, fitted_transforms)
 
+# %%
+forecast_df.info()
+forecast_df.head()
+
+# %%
+forecast_original_scale
+
+# %%
 # Evaluate metrics
 fold_metrics = evaluate_metrics(
     y_true=val_df,
-    y_pred=forecast_original,
+    y_pred=forecast_original_scale,
     y_train=train_df,
     metrics_config=backtest_config.metrics,
     fold_id="fold_0",
