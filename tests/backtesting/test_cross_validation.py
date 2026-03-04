@@ -171,11 +171,87 @@ def test_fold_keys_zero_padded_for_11_folds(data_config):
 # ---- input validation ----
 
 
-def test_non_datetime_ds_raises(data_config):
+def test_string_ds_raises(data_config):
     """String ds column raises ValueError with a clear message."""
     df = pd.DataFrame(
         {"unique_id": ["A", "A"], "ds": ["2023-01-01", "2023-02-01"], "y": [1.0, 2.0]}
     )
 
-    with pytest.raises(ValueError, match="datetime dtype"):
+    with pytest.raises(ValueError, match="datetime or integer dtype"):
         generate_folds(df, _cv_config(["2023-01-01"]), data_config)
+
+
+# ---- integer ds ----
+
+
+def test_integer_ds_single_origin(integer_panel, integer_data_config):
+    """Integer ds with one origin produces one fold with correct split."""
+    origin = 12
+    folds, test_split = generate_folds(
+        integer_panel, _cv_config([origin], horizon=5), integer_data_config
+    )
+
+    assert test_split is None
+    assert len(folds) == 1
+    assert "fold_0" in folds
+
+    train = folds["fold_0"]["train"]
+    val = folds["fold_0"]["val"]
+
+    assert (train["ds"] <= origin).all()
+    assert origin in train["ds"].values
+    assert (val["ds"] > origin).all()
+
+
+def test_integer_ds_val_ends_at_origin_plus_horizon(integer_panel, integer_data_config):
+    """Validation set extends exactly horizon steps past the origin."""
+    origin = 10
+    horizon = 5
+    folds, _ = generate_folds(
+        integer_panel, _cv_config([origin], horizon=horizon), integer_data_config
+    )
+    val = folds["fold_0"]["val"]
+
+    assert val["ds"].max() == origin + horizon
+
+
+def test_integer_ds_val_row_count_per_series(integer_panel, integer_data_config):
+    """Each series in the val set has exactly horizon rows."""
+    origin = 10
+    horizon = 5
+    folds, _ = generate_folds(
+        integer_panel, _cv_config([origin], horizon=horizon), integer_data_config
+    )
+    val = folds["fold_0"]["val"]
+
+    for uid in ["A", "B"]:
+        assert len(val[val["unique_id"] == uid]) == horizon
+
+
+def test_integer_ds_expanding_window(integer_panel, integer_data_config):
+    """A later integer origin produces a larger training set."""
+    folds, _ = generate_folds(
+        integer_panel,
+        _cv_config([5, 12], horizon=3),
+        integer_data_config,
+    )
+
+    train_0 = folds["fold_0"]["train"]
+    train_1 = folds["fold_1"]["train"]
+
+    assert len(train_1) > len(train_0)
+
+
+# ---- dtype / freq cross-validation ----
+
+
+def test_integer_ds_with_string_freq_raises(integer_panel, data_config):
+    """Integer ds column with string freq raises ValueError."""
+    with pytest.raises(ValueError, match="Integer ds column requires freq=1"):
+        generate_folds(integer_panel, _cv_config([10], horizon=3), data_config)
+
+
+def test_freq_one_with_datetime_ds_raises(monthly_panel, integer_data_config):
+    """freq=1 with datetime ds column raises ValueError."""
+    with pytest.raises(ValueError, match="freq=1 requires an integer ds column"):
+        generate_folds(monthly_panel, _cv_config([10], horizon=3), integer_data_config)

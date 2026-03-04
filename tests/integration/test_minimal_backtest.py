@@ -81,3 +81,78 @@ def test_minimal_backtest_end_to_end() -> None:
 
     # No test fold in V1
     assert results.test is None
+
+
+# ---- integer ds integration test ----
+
+
+def _synthetic_integer_panel() -> pd.DataFrame:
+    """Two-series panel with integer ds (0-23) and a simple linear trend."""
+    rows = []
+    for uid, base in [("A", 10.0), ("B", 50.0)]:
+        for i in range(24):
+            rows.append({"unique_id": uid, "ds": i, "y": base + float(i)})
+    return pd.DataFrame(rows)
+
+
+def _integer_ds_config() -> dict:
+    """Config with dummy model, no transforms, RMSE metric, integer ds."""
+    return {
+        "data": {"freq": 1},
+        "cross_validation": {
+            "mode": "explicit",
+            "horizon": 5,
+            "forecast_origins": [10, 15],
+        },
+        "model": {
+            "callable": "tsbricks._testing.dummy_models.forecast_only",
+        },
+        "metrics": {
+            "definitions": [
+                {
+                    "name": "rmse",
+                    "callable": "tsbricks.blocks.metrics.rmse",
+                    "type": "simple",
+                }
+            ],
+        },
+    }
+
+
+def test_minimal_backtest_integer_ds() -> None:
+    """Smoke test: integer ds panel + dummy model -> BacktestResults."""
+    df = _synthetic_integer_panel()
+    cfg = _integer_ds_config()
+
+    results = run_backtest(config=cfg, df=df)
+
+    # Return type
+    assert isinstance(results, BacktestResults)
+
+    # Metrics DataFrame is populated and has expected schema
+    metrics = results.cv.metrics
+    assert len(metrics) > 0
+    assert list(metrics.columns) == [
+        "metric_name",
+        "unique_id",
+        "fold",
+        "aggregation",
+        "value",
+    ]
+
+    # Correct fold count (2 origins = 2 folds)
+    assert len(results.cv.forecasts_per_fold) == 2
+    assert len(results.cv.train_val_splits_per_fold) == 2
+
+    # Fold origins are integers, not timestamps
+    assert len(results.cv.fold_origins) == 2
+    assert results.cv.fold_origins == [10, 15]
+
+    # Horizon preserved
+    assert results.horizon == 5
+
+    # Config preserved
+    assert results.config == cfg
+
+    # No test fold in V1
+    assert results.test is None

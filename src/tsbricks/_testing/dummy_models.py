@@ -10,14 +10,19 @@ def forecast_only(
 ) -> pd.DataFrame:
     """Return a forecast DataFrame only."""
     last_ds = train_df["ds"].max()
+    is_integer_ds = pd.api.types.is_integer_dtype(train_df["ds"])
     rows = []
     for uid in train_df["unique_id"].unique():
         last_y = train_df.loc[train_df["unique_id"] == uid, "y"].iloc[-1]
         for h in range(1, horizon + 1):
+            if is_integer_ds:
+                future_ds = last_ds + h
+            else:
+                future_ds = last_ds + pd.DateOffset(months=h)
             rows.append(
                 {
                     "unique_id": uid,
-                    "ds": last_ds + pd.DateOffset(months=h),
+                    "ds": future_ds,
                     "ypred": float(last_y),
                 }
             )
