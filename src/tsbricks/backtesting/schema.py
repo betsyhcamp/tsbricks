@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class DataConfig(BaseModel):
@@ -15,8 +15,15 @@ class DataConfig(BaseModel):
     target_col: str = "y"
     date_col: str = "ds"
     id_col: str = "unique_id"
-    freq: str
+    freq: str | int
     exogenous_columns: list[str] | None = None
+
+    @field_validator("freq")
+    @classmethod
+    def _validate_freq(cls, v: str | int) -> str | int:
+        if isinstance(v, int) and v != 1:
+            raise ValueError(f"Integer freq must be 1 (for integer ds), got {v}.")
+        return v
 
 
 class CrossValidationConfig(BaseModel):
@@ -24,7 +31,7 @@ class CrossValidationConfig(BaseModel):
 
     mode: Literal["explicit"]
     horizon: int = Field(gt=0)
-    forecast_origins: list[str] = Field(min_length=1)
+    forecast_origins: list[str | int] = Field(min_length=1)
 
     # Future: parametric mode fields
     n_folds: int | None = None
