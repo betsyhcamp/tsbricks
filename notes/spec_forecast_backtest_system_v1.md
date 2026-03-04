@@ -202,11 +202,11 @@ The system accepts pandas DataFrames in Nixtla long format. Polars DataFrames ar
 
 The user's DataFrame may use any column names for the target, date, and ID columns. The config's `data` section maps user column names to the internal standard names:
 
-| Internal Name | Config Field | Description                            |
-| ------------- | ------------ | -------------------------------------- |
-| `y`           | `target_col` | Target variable                        |
-| `ds`          | `date_col`   | Timestamp column                       |
-| `unique_id`   | `id_col`     | Unique identifier for each time series |
+| Internal Name | Config Field | Description                                  |
+| ------------- | ------------ | -------------------------------------------- |
+| `y`           | `target_col` | Target variable                              |
+| `ds`          | `date_col`   | Timestamp or integer index column (see §4.4) |
+| `unique_id`   | `id_col`     | Unique identifier for each time series       |
 
 `run_backtest` renames the user's columns to `y`, `ds`, `unique_id` at entry, immediately after Polars conversion (if applicable). **All internal processing, step functions, and output DataFrames use the standard names `y`, `ds`, `unique_id`.** Output DataFrames are not renamed back to the user's original column names — results consistently use the standard names.
 
@@ -237,11 +237,26 @@ results = run_backtest(config=config_dict, df=df)
 
 The system supports both single time series and panel data (multiple `unique_id` values). The cross-validation, transform, and evaluation logic applies identically in both cases; a single series is treated as panel data with one `unique_id`.
 
-### 4.4 Temporal Granularity
+### 4.4 Temporal Granularity and Index Types
 
-The system supports hourly, daily, weekly, and monthly time series. **The frequency must be specified explicitly in the config's `data` section via the `freq` field** (e.g., `freq: "MS"` for month-start, `freq: "D"` for daily). The system does not infer frequency from the data.
+The system supports two `ds` column types:
+
+**Datetime `ds`.** The `ds` column contains timestamps. The system supports hourly, daily, weekly, and monthly time series. The frequency is specified as a pandas frequency string (e.g., `freq: "MS"` for month-start, `freq: "D"` for daily).
+
+**Integer `ds`.** The `ds` column contains integer values that increment by 1. This mode is intended for abstract index-based time series where timestamps are not meaningful (e.g., step-based simulations, sequence models, or datasets where the temporal dimension is an ordinal index). When `ds` is integer, `freq` must be set to `1`. The integers may start from any arbitrary value (e.g., `0, 1, 2, ...` or `100, 101, 102, ...`).
+
+**The frequency must be specified explicitly in the config's `data` section via the `freq` field.** The `freq` field accepts either a string (pandas frequency alias) or the integer `1`. The system does not infer frequency from the data.
+
+**Mode detection.** The system infers the `ds` mode at runtime by inspecting the DataFrame's `ds` column dtype. If `ds` is an integer dtype, integer mode is used; if `ds` is a datetime dtype, datetime mode is used. The system cross-validates the dtype against the `freq` config value:
+
+- Integer `ds` dtype with `freq` other than `1` → raises `ValueError`.
+- `freq: 1` with non-integer `ds` dtype → raises `ValueError`.
+- Datetime `ds` dtype with a string `freq` → valid (existing behavior).
+- Integer `ds` dtype with `freq: 1` → valid.
 
 **Why explicit frequency is required.** `pd.infer_freq()` is unreliable in practice: it fails on series with gaps, returns `None` for short series, can produce ambiguous results for monthly data (`"M"` vs `"MS"` vs `"ME"`), and behaves inconsistently across pandas versions. In a panel setting, different series may have different gap patterns, making inference even less reliable. Requiring the user to specify `freq` eliminates this class of subtle bugs. The `freq` value is used for parametric fold origin computation and validation.
+
+**No contiguity enforcement.** The system does not currently enforce that `ds` values (whether datetime or integer) are contiguous with no gaps. Contiguity checks are a future enhancement.
 
 ### 4.5 Polars Conversion
 
@@ -267,9 +282,10 @@ The system is designed to accommodate sliding window in a future version.
 
 The user specifies folds in one of two mutually exclusive modes:
 
-**Explicit forecast origins.** The user provides a list of forecast origin dates. Each date defines where the training set ends and the forecast begins. These forecast origin dates are the date of the last and most recent data point in the cross-validation training sets.
+**Explicit forecast origins.** The user provides a list of forecast origin values. Each value defines where the training set ends and the forecast begins. These forecast origins are the value of `ds` at the last and most recent data point in the cross-validation training sets. Origins are date strings for datetime `ds` or integers for integer `ds`.
 
 ```yaml
+# Datetime ds — origins are date strings
 cross_validation:
   mode: explicit
   horizon: 12
@@ -278,6 +294,17 @@ cross_validation:
     - "2023-04-01"
     - "2023-07-01"
     - "2023-10-01"
+```
+
+```yaml
+# Integer ds — origins are integers
+cross_validation:
+  mode: explicit
+  horizon: 5
+  forecast_origins:
+    - 30
+    - 40
+    - 50
 ```
 
 **Parametric.** The user specifies the number of folds and the step size (increment to slide the forecast origin). The system computes forecast origin dates by working backward from a boundary date. The boundary date depends on whether the test fold is enabled:
@@ -337,7 +364,12 @@ test:
 
 ### 5.6 Internal Representation
 
-Both the "explicit forecast origin" and the "parametric" modes produce the same internal representation: an ordered list of forecast origin dates. All downstream logic (splitting, fitting, evaluating) operates on this list without knowledge of which mode produced it. The test fold origin is handled separately from the CV fold origins.
+Both the "explicit forecast origin" and the "parametric" modes produce the same internal representation: an ordered list of forecast origin values (timestamps for datetime `ds`, integers for integer `ds`). All downstream logic (splitting, fitting, evaluating) operates on this list without knowledge of which mode produced it or which `ds` type is in use — the `<=` and `>` comparison operators used for train/val splitting work identically for both timestamps and integers. The test fold origin is handled separately from the CV fold origins.
+
+**Horizon arithmetic.** The validation end boundary is computed as:
+
+- **Datetime mode:** `val_end = origin + horizon * pd.tseries.frequencies.to_offset(freq)`
+- **Integer mode:** `val_end = origin + horizon` (since `freq=1`, this simplifies to direct addition)
 
 ______________________________________________________________________
 
@@ -585,11 +617,11 @@ The system imports the callable dynamically from the import path specified in th
 
 Both the forecast DataFrame and the fitted values DataFrame use the same schema:
 
-| Column      | Description                                    |
-| ----------- | ---------------------------------------------- |
-| `ds`        | Timestamp                                      |
-| `unique_id` | Series identifier                              |
-| `ypred`     | Predicted value (forecast or in-sample fitted) |
+| Column      | Description                                               |
+| ----------- | --------------------------------------------------------- |
+| `ds`        | Timestamp (datetime mode) or integer index (integer mode) |
+| `unique_id` | Series identifier                                         |
+| `ypred`     | Predicted value (forecast or in-sample fitted)            |
 
 The column name `ypred` (no underscore) is the standard name for predictions throughout the system. This applies to both out-of-sample forecasts and in-sample fitted values.
 
@@ -872,7 +904,7 @@ data:
   target_col: y
   date_col: ds
   id_col: unique_id
-  freq: "MS"               # required — e.g., "MS" (month-start), "D" (daily), "W" (weekly), "h" (hourly)
+  freq: "MS"               # required — str for datetime ds (e.g., "MS", "D", "W", "h") or int 1 for integer ds
   exogenous_columns: [price, promotions, temperature]
 
 # --- Cross-Validation ---
@@ -881,7 +913,7 @@ cross_validation:
   horizon: 12
   n_folds: 4               # parametric mode only
   step_size: 3             # parametric mode only
-  # forecast_origins:       # explicit mode only
+  # forecast_origins:       # explicit mode only — date strings for datetime ds, integers for integer ds
   #   - "2023-01-01"
   #   - "2023-04-01"
 
@@ -956,7 +988,9 @@ artifact_storage:
 
 **V1 changes from initial design:**
 
-- `data.freq` is required (see section 4.4 for rationale).
+- `data.freq` is required (see section 4.4 for rationale). Accepts `str` (pandas frequency alias) or `int` (`1` for integer `ds`).
+- `cross_validation.forecast_origins` accepts `list[str | int]` — date strings for datetime `ds`, integers for integer `ds`.
+- Integer `ds` is supported alongside datetime `ds`. Mode is inferred from the DataFrame's `ds` column dtype at runtime, with cross-validation against `freq` (see section 4.4).
 - `artifact_storage.output_path` is removed from V1. The system returns structured results as a Python dataclass; the user controls where and how artifacts are persisted.
 - The `experiment_tracking` config section is removed from V1. The user controls logging to Vertex AI Experiments directly using the Vertex AI SDK (see section 12).
 
@@ -1141,7 +1175,8 @@ The system validates as much as possible before beginning computation:
 
 - YAML config parses without error.
 - Required config sections and fields are present.
-- `data.freq` is present and is a valid pandas frequency string.
+- `data.freq` is present and is either a valid pandas frequency string or the integer `1`.
+- `ds` column dtype is cross-validated against `freq`: integer `ds` requires `freq=1`; `freq=1` requires integer `ds`. Mismatches raise `ValueError`.
 - Callable import paths for model, metrics, and transforms resolve successfully.
 - Required columns (mapped via `target_col`, `date_col`, `id_col`) exist in the input DataFrame.
 - Exogenous columns specified in the config exist in the DataFrame.

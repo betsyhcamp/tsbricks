@@ -87,10 +87,15 @@ def run_backtest(
 
     metrics = pd.concat(all_metrics, ignore_index=True)
 
-    fold_origins = sorted(
-        pd.Timestamp(origin)
-        for origin in backtest_config.cross_validation.forecast_origins
-    )
+    if backtest_config.data.freq == 1:
+        fold_origins = sorted(
+            int(origin) for origin in backtest_config.cross_validation.forecast_origins
+        )
+    else:
+        fold_origins = sorted(
+            pd.Timestamp(origin)
+            for origin in backtest_config.cross_validation.forecast_origins
+        )
 
     cv_results = CVResults(
         forecasts_per_fold=forecasts_per_fold,

@@ -20,8 +20,8 @@ class CVResults:
         metrics: Long-format DataFrame with columns ``metric_name``,
             ``unique_id``, ``fold``, ``aggregation``, ``value``.
             Contains raw per-fold, per-series values.
-        fold_origins: Chronologically sorted forecast origin timestamps,
-            one per fold.
+        fold_origins: Chronologically sorted forecast origins (timestamps
+            for datetime ds, integers for integer ds), one per fold.
         train_val_splits_per_fold: Fold ID to ``{"train": df, "val": df}``
             on the original scale.
         fitted_values: Fold ID to in-sample fitted-value DataFrame
@@ -40,7 +40,7 @@ class CVResults:
     # Always present
     forecasts_per_fold: dict[str, pd.DataFrame]
     metrics: pd.DataFrame
-    fold_origins: list[pd.Timestamp]
+    fold_origins: list[pd.Timestamp] | list[int]
     train_val_splits_per_fold: dict[str, dict[str, pd.DataFrame]]
 
     # Present depending on model/config
@@ -64,7 +64,8 @@ class TestResults:
             ``unique_id``, ``ypred`` on the original scale.
         metrics: Long-format metrics DataFrame with the same schema
             as ``CVResults.metrics``.
-        test_origin: Forecast origin timestamp for the test fold.
+        test_origin: Forecast origin for the test fold (timestamp for
+            datetime ds, integer for integer ds).
         train_test_split: ``{"train": df, "test": df}`` on the
             original scale.
         fitted_values: In-sample fitted-value DataFrame (original
@@ -83,7 +84,7 @@ class TestResults:
     # Always present
     forecasts: pd.DataFrame
     metrics: pd.DataFrame
-    test_origin: pd.Timestamp
+    test_origin: pd.Timestamp | int
     train_test_split: dict[str, pd.DataFrame]
 
     # Present depending on model/config
