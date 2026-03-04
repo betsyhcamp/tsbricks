@@ -263,7 +263,8 @@ The following config sections are **not present in V1**:
 
 The following config fields are **new in V1**:
 
-- **`data.freq`** — Required. Explicit pandas frequency string (e.g., `"MS"`, `"D"`, `"W"`). The system does not infer frequency from the data due to the unreliability of `pd.infer_freq()`.
+- **`data.freq`** — Required. Either a pandas frequency string (`str`, e.g., `"MS"`, `"D"`, `"W"`) or the integer `1` (for integer `ds` mode). Type: `str | int`. The system does not infer frequency from the data due to the unreliability of `pd.infer_freq()`.
+- **Integer `ds` support** — The `ds` column may be either datetime or integer dtype. Mode is inferred at runtime from the DataFrame's `ds` column dtype, with cross-validation against `freq`: integer `ds` requires `freq=1`, and `freq=1` requires integer `ds`. `forecast_origins` in `CrossValidationConfig` accepts `list[str | int]` to accommodate both modes. See `spec_forecast_backtest_system_v1.md` §4.4 for full details.
 
 ______________________________________________________________________
 
