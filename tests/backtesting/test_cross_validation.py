@@ -184,23 +184,28 @@ def test_string_ds_raises(data_config):
 # ---- integer ds ----
 
 
-def test_integer_ds_single_origin(integer_panel, integer_data_config):
-    """Integer ds with one origin produces one fold with correct split."""
-    origin = 12
+def test_integer_ds_single_origin_produces_one_fold(integer_panel, integer_data_config):
+    """A single integer origin produces exactly one fold."""
     folds, test_split = generate_folds(
-        integer_panel, _cv_config([origin], horizon=5), integer_data_config
+        integer_panel, _cv_config([12], horizon=5), integer_data_config
     )
 
     assert test_split is None
-    assert len(folds) == 1
-    assert "fold_0" in folds
+    assert list(folds.keys()) == ["fold_0"]
+
+
+def test_integer_ds_train_val_split_boundaries(integer_panel, integer_data_config):
+    """Train includes origin, val starts after origin."""
+    origin = 12
+    folds, _ = generate_folds(
+        integer_panel, _cv_config([origin], horizon=5), integer_data_config
+    )
 
     train = folds["fold_0"]["train"]
     val = folds["fold_0"]["val"]
 
-    assert (train["ds"] <= origin).all()
-    assert origin in train["ds"].values
-    assert (val["ds"] > origin).all()
+    assert train["ds"].max() == origin
+    assert val["ds"].min() == origin + 1
 
 
 def test_integer_ds_val_ends_at_origin_plus_horizon(integer_panel, integer_data_config):
