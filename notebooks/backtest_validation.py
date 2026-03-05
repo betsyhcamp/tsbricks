@@ -306,3 +306,220 @@ assert np.isclose(manual_rmse, engine_rmse, rtol=1e-10), (
     f"RMSE mismatch: manual={manual_rmse}, engine={engine_rmse}"
 )
 print("\nManual RMSE matches engine RMSE.")
+
+# %% [markdown]
+# ---
+# # Integer `ds` Example
+#
+# The following sections repeat the same validation workflow using the same
+# 3-series panel but with integer `ds` values (0–47) and `freq=1`.
+# No transforms are applied.
+
+# %% [markdown]
+# ## 9. Integer `ds` — Synthetic Data
+
+# %%
+# Same 3-series panel as above but with integer ds instead of datetime
+np.random.seed(1027)
+
+series_params = {
+    "A": {"base": 100, "trend": 0.5, "amplitude": 10},
+    "B": {"base": 200, "trend": 1.0, "amplitude": 20},
+    "C": {"base": 50, "trend": 0.3, "amplitude": 5},
+}
+
+int_rows = []
+for uid, params in series_params.items():
+    for i in range(48):
+        value = (
+            params["base"]
+            + params["trend"] * i
+            + params["amplitude"] * np.sin(2 * np.pi * i / 12)
+            + np.random.normal(0, 2)
+        )
+        int_rows.append({"unique_id": uid, "ds": i, "y": max(value, 1.0)})
+
+int_df = pd.DataFrame(int_rows)
+print(f"Shape: {int_df.shape}")
+print(f"ds dtype: {int_df['ds'].dtype}")
+print(f"\nSeries counts:\n{int_df.groupby('unique_id').size()}")
+int_df.head(10)
+
+# %%
+for uid in int_df['unique_id'].unique():
+    temp = int_df[int_df['unique_id'] == uid].copy()
+    fig, ax = plt.subplots(figsize=(9, 3))
+    ax.plot(temp['ds'], temp['y'])
+    ax.set_title(f'Series {uid}')
+    ax.set_xlabel('Step')
+    ax.set_ylabel('y')
+    plt.tight_layout()
+    plt.show()
+
+# %% [markdown]
+# ## 10. Integer `ds` — Model Callable
+
+# %%
+def statsforecast_ets_integer_ds(train_df, horizon, **kwargs):
+    """Model callable: Thin wrapper around statsforecast AutoETS for integer ds.
+
+    Follows the tsbricks model callable convention:
+    callable(train_df, horizon, **kwargs) -> DataFrame[ds, unique_id, ypred]
+    """
+    from statsforecast import StatsForecast
+    from statsforecast.models import AutoETS
+
+    season_length = kwargs.get("season_length", 12)
+    freq = kwargs.get("freq", 1)
+
+    sf = StatsForecast(
+        models=[AutoETS(season_length=season_length)],
+        freq=freq,
+    )
+    forecast = sf.forecast(df=train_df, h=horizon)
+    forecast = forecast.reset_index()
+    forecast = forecast.rename(columns={"AutoETS": "ypred"})
+    return forecast[["unique_id", "ds", "ypred"]]
+
+
+print("Integer ds ETS model wrapper defined.")
+
+# %% [markdown]
+# ## 11. Integer `ds` — Config
+
+# %%
+int_cfg = {
+    "data": {"freq": 1},
+    "cross_validation": {
+        "mode": "explicit",
+        "horizon": 6,
+        "forecast_origins": [30, 40],
+    },
+    "model": {
+        "callable": "__main__.statsforecast_ets_integer_ds",
+        "hyperparameters": {"season_length": 12, "freq": 1},
+    },
+    "metrics": {
+        "definitions": [
+            {
+                "name": "rmse",
+                "callable": "tsbricks.blocks.metrics.rmse",
+                "type": "simple",
+            },
+            {
+                "name": "rmsse",
+                "callable": "tsbricks.blocks.metrics.rmsse",
+                "type": "context_aware",
+            },
+        ]
+    },
+}
+
+int_cfg
+
+# %% [markdown]
+# ## 12. Integer `ds` — `run_backtest` and Inspect Results
+
+# %%
+int_results = run_backtest(config=int_cfg, df=int_df)
+
+print(f"Type: {type(int_results).__name__}")
+print(f"Horizon: {int_results.horizon}")
+print(f"Fold origins: {int_results.cv.fold_origins}")
+print(f"Folds: {list(int_results.cv.forecasts_per_fold.keys())}")
+print(f"Test fold: {int_results.test}")
+print(f"\nMetrics ({len(int_results.cv.metrics)} rows):")
+int_results.cv.metrics
+
+# %%
+print("Sample forecast (fold_0):")
+int_results.cv.forecasts_per_fold["fold_0"].head(10)
+
+# %% [markdown]
+# ## 13. Integer `ds` — Composable Step Functions
+
+# %%
+# Parse config and generate folds
+int_backtest_config = parse_config(config=int_cfg)
+int_cv_folds, _ = generate_folds(
+    int_df, int_backtest_config.cross_validation, int_backtest_config.data
+)
+
+int_cv_folds.keys()
+
+# %%
+int_cv_folds
+
+# %%
+int_train_df = int_cv_folds["fold_0"]["train"]
+int_val_df = int_cv_folds["fold_0"]["val"]
+print(f"Train shape: {int_train_df.shape}, Val shape: {int_val_df.shape}")
+
+# %%
+# Fit and apply transforms (empty list — no transforms for integer ds example)
+int_fitted_transforms, int_transformed_train = fit_transforms(
+    int_train_df, int_backtest_config.transforms or []
+)
+int_transformed_val = apply_transforms(int_val_df, int_fitted_transforms)
+
+# %%
+int_transformed_train
+
+# %%
+# Invoke model
+int_forecast_df, _, _ = invoke_model(
+    int_transformed_train,
+    int_backtest_config.model,
+    int_backtest_config.cross_validation.horizon,
+)
+
+# Inverse transform (no-op with empty transforms)
+int_forecast_original = inverse_transforms(int_forecast_df, int_fitted_transforms)
+
+# %%
+int_forecast_df.info()
+int_forecast_df.head()
+
+# %%
+int_forecast_original
+
+# %%
+# Evaluate metrics
+int_fold_metrics = evaluate_metrics(
+    y_true=int_val_df,
+    y_pred=int_forecast_original,
+    y_train=int_train_df,
+    metrics_config=int_backtest_config.metrics,
+    fold_id="fold_0",
+)
+
+print("\nStep-function fold_0 metrics:")
+int_fold_metrics
+
+# %% [markdown]
+# ## 14. Integer `ds` — Sanity-Check Metrics
+
+# %%
+# Manually compute RMSE for series A in fold_0
+int_uid = "A"
+int_y_true = int_val_df.loc[int_val_df["unique_id"] == int_uid, "y"].to_numpy()
+int_y_pred = int_forecast_original.loc[
+    int_forecast_original["unique_id"] == int_uid, "ypred"
+].to_numpy()
+
+int_manual_rmse = np.sqrt(np.mean((int_y_true - int_y_pred) ** 2))
+
+int_engine_rmse = int_results.cv.metrics.loc[
+    (int_results.cv.metrics["metric_name"] == "rmse")
+    & (int_results.cv.metrics["unique_id"] == int_uid)
+    & (int_results.cv.metrics["fold"] == "fold_0"),
+    "value",
+].iloc[0]
+
+print(f"Manual RMSE (series A, fold_0): {int_manual_rmse:.6f}")
+print(f"Engine RMSE (series A, fold_0): {int_engine_rmse:.6f}")
+
+assert np.isclose(int_manual_rmse, int_engine_rmse, rtol=1e-10), (
+    f"RMSE mismatch: manual={int_manual_rmse}, engine={int_engine_rmse}"
+)
+print("\nManual RMSE matches engine RMSE.")
