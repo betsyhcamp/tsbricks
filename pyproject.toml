@@ -44,6 +44,7 @@ dev = [
     "sphinx-autodoc-typehints",
     "myst-parser",
     "pandas-stubs==2.3.3.*",
+    "pytest-cov",
     "pytest-mock>=3.15.1",
     "ipykernel",
     "jupyterlab",
@@ -60,3 +61,25 @@ extend-exclude = ["*.md", ".venv", "notebooks"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.coverage.run]
+source = ["tsbricks"]
+branch = true
+omit = ["src/tsbricks/_testing/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    'if __name__ == "__main__"',
+    "raise NotImplementedError",
+    "pass",
+    "\\.\\.\\.",
+    "assert_never",
+    "raise AssertionError",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
