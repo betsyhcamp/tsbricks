@@ -65,6 +65,11 @@ tasks:
     cmds:
       - uv run pytest
 
+  test-cov:
+    desc: Run tests with coverage report
+    cmds:
+      - uv run pytest --cov --cov-report=term-missing --cov-report=html
+
   # ===========================================
   # COMPOSITE TASKS
   # ===========================================
