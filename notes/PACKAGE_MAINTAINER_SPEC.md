@@ -20,7 +20,7 @@ tsbricks/
 │   ├── metrics/          # Built-in metric callables (MAE, RMSE, RMSSE, MAPE, scaled bias, WAPE, WRMSSE)
 │   │   ├── __init__.py
 │   │   └── ...
-│   ├── transforms/       # BaseTransform base class + built-in transforms (BoxCox, StandardScaler, Log, Log1p, Power, AddConstant, TradingDayNorm)
+│   ├── transforms/       # BaseTransform base class + built-in transforms (BoxCox, StandardScaler, Log, Log1p, Power, AddConstant, TradingDayNorm, WorkdayNormalize)
 │   │   ├── __init__.py
 │   │   └── ...
 │   ├── diagnostics/      # Model fit diagnostics (ACF, PACF)
@@ -92,7 +92,7 @@ These checks should be added to the CI pipeline alongside linting and type check
 
 The backtesting system, runner, and blocks modules are shipped as a single package rather than separate packages. This decision was evaluated at design time and is based on the following factors:
 
-**The built-in implementations are part of the backtesting system's value proposition.** The spec ships built-in metrics (MAE, RMSE, MAPE, RMSSE, scaled bias) and built-in transforms (BoxCox, StandardScaler, NaturalLog, Log1p, Power, AddConstant, TradingDayNorm), all extending a `BaseTransform` base class. These are designed to work with the backtesting system's callable contracts. Splitting them into a separate package would create user confusion about which package provides what.
+**The built-in implementations are part of the backtesting system's value proposition.** The spec ships built-in metrics (MAE, RMSE, MAPE, RMSSE, scaled bias) and built-in transforms (BoxCox, StandardScaler, NaturalLog, Log1p, Power, AddConstant, TradingDayNorm, WorkdayNormalize), all extending a `BaseTransform` base class. These are designed to work with the backtesting system's callable contracts. Splitting them into a separate package would create user confusion about which package provides what.
 
 **The interfaces have not stabilized.** V1 is the first release. The transform interface, metric callable signatures, and the boundaries between blocks, runner, and backtesting will evolve as features like `per_group` transform scope, sliding window CV, the model adapter pattern, `run_forecast`, and native Optuna integration are added. Co-locating the code allows these interfaces to evolve in lockstep with single-PR refactors and single version bumps.
 
@@ -192,6 +192,7 @@ from tsbricks.blocks.transforms import (
     PowerTransform,
     AddConstantTransform,
     TradingDayNormalization,
+    WorkdayNormalizeTransform,
 )
 ```
 
@@ -296,3 +297,9 @@ The following patterns are required in V1 to enable future acceleration:
 1. No DataFrame index dependency — column-based operations only.
 1. Isolate per-series iteration into `_map_per_series`.
 1. `StandardScaler` is a custom implementation (not wrapping sklearn or coreforecast) to keep dependencies minimal and maintain full control over the per-series iteration pattern.
+
+### 8.4 Open Design Questions
+
+**`get_fitted_params` naming and contract.** The `get_fitted_params` method on `BaseTransform` implies parameters learned from data. Not all transforms fit parameters — `WorkdayNormalizeTransform` stores external calendar data, and a log transform has no state at all. Currently these transforms return an empty dict. As more non-fitting transforms are added, consider whether to rename or broaden this method (e.g., `get_params`) to accommodate transforms that have configuration state but no fitted state. Revisit once there are enough concrete transforms to see if a clear pattern emerges. See `spec_workday_normalize_transform.md` §6.1 for the full discussion.
+
+**Standalone config validation for composable step functions.** When the user calls `run_backtest`, the pipeline parses the config through Pydantic and all validation runs. When a power user calls composable step functions like `fit_transforms` directly, they bypass this validation. Consider exposing a standalone `validate_config` function (or similar) that power users can call independently of `run_backtest` to get the same validation guarantees when using the composable step functions. See `spec_workday_normalize_transform.md` §6.2 for the full discussion.
