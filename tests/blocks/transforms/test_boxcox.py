@@ -2,39 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from tsbricks.blocks.transforms import BaseTransform, BoxCoxTransform
-
-
-# ---- Fixtures ----
-
-
-@pytest.fixture
-def panel_df() -> pd.DataFrame:
-    """Synthetic panel with 2 series that have different distributions.
-
-    Series A: linear ramp (values 10..19) — roughly log-linear.
-    Series B: quadratic growth (values 100..900) — needs a stronger transform.
-    Both are strictly positive, suitable for Box-Cox.
-    """
-    n = 10
-    dates = pd.date_range("2020-01-01", periods=n, freq="MS")
-    df_a = pd.DataFrame(
-        {
-            "unique_id": "A",
-            "ds": dates,
-            "y": np.arange(10, 10 + n, dtype=float),
-        }
-    )
-    df_b = pd.DataFrame(
-        {
-            "unique_id": "B",
-            "ds": dates,
-            "y": np.arange(1, 1 + n, dtype=float) ** 2 * 100,
-        }
-    )
-    return pd.concat([df_a, df_b], ignore_index=True)
 
 
 # ---- Tests ----
@@ -43,54 +12,58 @@ def panel_df() -> pd.DataFrame:
 class TestBoxCoxTransform:
     """Tests for BoxCoxTransform."""
 
-    def test_round_trip_fidelity(self, panel_df: pd.DataFrame) -> None:
+    def test_round_trip_fidelity(self, boxcox_panel_df: pd.DataFrame) -> None:
         """fit_transform → inverse_transform ≈ original values."""
         tx = BoxCoxTransform()
-        transformed = tx.fit_transform(panel_df, "y", method="loglik")
+        transformed = tx.fit_transform(boxcox_panel_df, "y", method="loglik")
         recovered = tx.inverse_transform(transformed, "y")
 
         np.testing.assert_allclose(
             recovered["y"].values,
-            panel_df["y"].values,
+            boxcox_panel_df["y"].values,
             rtol=1e-10,
         )
 
-    def test_per_series_independent_lambdas(self, panel_df: pd.DataFrame) -> None:
+    def test_per_series_independent_lambdas(
+        self, boxcox_panel_df: pd.DataFrame
+    ) -> None:
         """Each unique_id gets its own fitted lambda."""
         tx = BoxCoxTransform()
-        tx.fit_transform(panel_df, "y", method="loglik")
+        tx.fit_transform(boxcox_panel_df, "y", method="loglik")
 
         params = tx.get_fitted_params()
         assert set(params.keys()) == {"A", "B"}
         assert params["A"]["lambda"] != params["B"]["lambda"]
 
     def test_get_fitted_params_returns_python_floats(
-        self, panel_df: pd.DataFrame
+        self, boxcox_panel_df: pd.DataFrame
     ) -> None:
         """Fitted params must be plain Python float, not numpy scalar."""
         tx = BoxCoxTransform()
-        tx.fit_transform(panel_df, "y", method="loglik")
+        tx.fit_transform(boxcox_panel_df, "y", method="loglik")
 
         for uid, p in tx.get_fitted_params().items():
             assert type(p["lambda"]) is float, (
                 f"Expected float for {uid}, got {type(p['lambda'])}"
             )
 
-    def test_input_dataframe_not_mutated(self, panel_df: pd.DataFrame) -> None:
+    def test_input_dataframe_not_mutated(self, boxcox_panel_df: pd.DataFrame) -> None:
         """The original DataFrame must not be changed by any method."""
-        original_values = panel_df["y"].values.copy()
+        original_values = boxcox_panel_df["y"].values.copy()
 
         tx = BoxCoxTransform()
-        transformed = tx.fit_transform(panel_df, "y", method="loglik")
+        transformed = tx.fit_transform(boxcox_panel_df, "y", method="loglik")
         tx.inverse_transform(transformed, "y")
 
-        np.testing.assert_array_equal(panel_df["y"].values, original_values)
+        np.testing.assert_array_equal(boxcox_panel_df["y"].values, original_values)
 
-    def test_transform_applies_stored_lambdas(self, panel_df: pd.DataFrame) -> None:
+    def test_transform_applies_stored_lambdas(
+        self, boxcox_panel_df: pd.DataFrame
+    ) -> None:
         """transform() on new data uses the previously fitted lambdas."""
         tx = BoxCoxTransform()
-        transformed_via_fit = tx.fit_transform(panel_df, "y", method="loglik")
-        transformed_via_apply = tx.transform(panel_df, "y")
+        transformed_via_fit = tx.fit_transform(boxcox_panel_df, "y", method="loglik")
+        transformed_via_apply = tx.transform(boxcox_panel_df, "y")
 
         np.testing.assert_allclose(
             transformed_via_apply["y"].values,
@@ -98,17 +71,17 @@ class TestBoxCoxTransform:
             rtol=1e-12,
         )
 
-    def test_guerrero_method(self, panel_df: pd.DataFrame) -> None:
+    def test_guerrero_method(self, boxcox_panel_df: pd.DataFrame) -> None:
         """Guerrero method path with season_length works."""
         tx = BoxCoxTransform()
         transformed = tx.fit_transform(
-            panel_df, "y", method="guerrero", season_length=4
+            boxcox_panel_df, "y", method="guerrero", season_length=4
         )
         recovered = tx.inverse_transform(transformed, "y")
 
         np.testing.assert_allclose(
             recovered["y"].values,
-            panel_df["y"].values,
+            boxcox_panel_df["y"].values,
             rtol=1e-10,
         )
 
@@ -116,9 +89,9 @@ class TestBoxCoxTransform:
         """BoxCoxTransform must extend BaseTransform."""
         assert issubclass(BoxCoxTransform, BaseTransform)
 
-    def test_columns_preserved(self, panel_df: pd.DataFrame) -> None:
+    def test_columns_preserved(self, boxcox_panel_df: pd.DataFrame) -> None:
         """All columns in the input appear in the output."""
         tx = BoxCoxTransform()
-        transformed = tx.fit_transform(panel_df, "y", method="loglik")
+        transformed = tx.fit_transform(boxcox_panel_df, "y", method="loglik")
 
-        assert set(transformed.columns) == set(panel_df.columns)
+        assert set(transformed.columns) == set(boxcox_panel_df.columns)
