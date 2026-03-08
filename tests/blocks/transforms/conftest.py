@@ -65,3 +65,24 @@ def global_calendar() -> pd.DataFrame:
             "n_workdays": [20.0, 19.0, 21.0, 22.0],
         }
     )
+
+
+@pytest.fixture
+def per_series_calendar() -> pd.DataFrame:
+    """Per-series calendar where A and B have different n_workdays per month."""
+    dates = pd.date_range("2024-01-01", periods=4, freq="MS")
+    rows_a = pd.DataFrame(
+        {
+            "unique_id": "A",
+            "ds": dates,
+            "n_workdays": [20.0, 19.0, 21.0, 22.0],
+        }
+    )
+    rows_b = pd.DataFrame(
+        {
+            "unique_id": "B",
+            "ds": dates,
+            "n_workdays": [18.0, 17.0, 19.0, 20.0],
+        }
+    )
+    return pd.concat([rows_a, rows_b], ignore_index=True)
