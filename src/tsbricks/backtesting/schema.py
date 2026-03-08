@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class DataConfig(BaseModel):
@@ -58,6 +58,34 @@ class TransformConfig(BaseModel):
     # Out of scope for V1
     model_native: bool | None = None
     series_overrides: dict[str, Any] | None = None
+
+    _GLOBAL_ONLY_TRANSFORMS = {"WorkdayNormalizeTransform"}
+    _CALENDAR_SCOPE_TRANSFORMS = {"WorkdayNormalizeTransform"}
+    _VALID_CALENDAR_SCOPES = ("global", "per_series")
+
+    @model_validator(mode="after")
+    def _check_scope_constraints(self) -> TransformConfig:
+        class_name = self.class_path.rsplit(".", 1)[-1]
+        if class_name in self._GLOBAL_ONLY_TRANSFORMS and self.scope != "global":
+            raise ValueError(
+                f"Transform '{self.name}' uses {class_name} which requires "
+                f"scope='global', got scope='{self.scope}'."
+            )
+        if class_name in self._CALENDAR_SCOPE_TRANSFORMS:
+            params = self.params or {}
+            calendar_scope = params.get("calendar_scope")
+            if calendar_scope is None:
+                raise ValueError(
+                    f"Transform '{self.name}' uses {class_name} which requires "
+                    f"'calendar_scope' in params."
+                )
+            if calendar_scope not in self._VALID_CALENDAR_SCOPES:
+                raise ValueError(
+                    f"Transform '{self.name}' has invalid calendar_scope="
+                    f"'{calendar_scope}'. Must be one of "
+                    f"{self._VALID_CALENDAR_SCOPES}."
+                )
+        return self
 
 
 class ModelConfig(BaseModel):
