@@ -289,3 +289,130 @@ def test_integer_forecast_origins_accepted(valid_cfg: dict) -> None:
     cfg = parse_config(config=valid_cfg)
 
     assert cfg.cross_validation.forecast_origins == [10, 20, 30]
+
+
+# ---- Transform scope constraints ----
+
+
+def test_workday_transform_scope_global_accepted(valid_cfg: dict) -> None:
+    """WorkdayNormalizeTransform with scope='global' is valid."""
+    valid_cfg["transforms"] = [
+        {
+            "name": "workday_norm",
+            "class": "tsbricks.blocks.transforms.WorkdayNormalizeTransform",
+            "scope": "global",
+            "targets": ["y"],
+            "params": {"calendar_scope": "global"},
+        }
+    ]
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.transforms[0].scope == "global"
+
+
+def test_workday_transform_scope_per_series_raises(valid_cfg: dict) -> None:
+    """WorkdayNormalizeTransform with scope='per_series' raises ValidationError."""
+    valid_cfg["transforms"] = [
+        {
+            "name": "workday_norm",
+            "class": "tsbricks.blocks.transforms.WorkdayNormalizeTransform",
+            "scope": "per_series",
+            "targets": ["y"],
+            "params": {"calendar_scope": "global"},
+        }
+    ]
+    with pytest.raises(ValidationError, match="requires scope='global'"):
+        parse_config(config=valid_cfg)
+
+
+def test_workday_transform_default_scope_raises(valid_cfg: dict) -> None:
+    """WorkdayNormalizeTransform without explicit scope defaults to per_series and raises."""
+    valid_cfg["transforms"] = [
+        {
+            "name": "workday_norm",
+            "class": "tsbricks.blocks.transforms.WorkdayNormalizeTransform",
+            "targets": ["y"],
+            "params": {"calendar_scope": "global"},
+        }
+    ]
+    with pytest.raises(ValidationError, match="requires scope='global'"):
+        parse_config(config=valid_cfg)
+
+
+# ---- calendar_scope validation ----
+
+
+def test_workday_transform_calendar_scope_global_accepted(valid_cfg: dict) -> None:
+    """calendar_scope='global' in params is valid."""
+    valid_cfg["transforms"] = [
+        {
+            "name": "workday_norm",
+            "class": "tsbricks.blocks.transforms.WorkdayNormalizeTransform",
+            "scope": "global",
+            "targets": ["y"],
+            "params": {"calendar_scope": "global"},
+        }
+    ]
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.transforms[0].params["calendar_scope"] == "global"
+
+
+def test_workday_transform_calendar_scope_per_series_accepted(valid_cfg: dict) -> None:
+    """calendar_scope='per_series' in params is valid."""
+    valid_cfg["transforms"] = [
+        {
+            "name": "workday_norm",
+            "class": "tsbricks.blocks.transforms.WorkdayNormalizeTransform",
+            "scope": "global",
+            "targets": ["y"],
+            "params": {"calendar_scope": "per_series"},
+        }
+    ]
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.transforms[0].params["calendar_scope"] == "per_series"
+
+
+def test_workday_transform_missing_calendar_scope_raises(valid_cfg: dict) -> None:
+    """WorkdayNormalizeTransform without calendar_scope in params raises."""
+    valid_cfg["transforms"] = [
+        {
+            "name": "workday_norm",
+            "class": "tsbricks.blocks.transforms.WorkdayNormalizeTransform",
+            "scope": "global",
+            "targets": ["y"],
+            "params": {},
+        }
+    ]
+    with pytest.raises(ValidationError, match="requires.*calendar_scope"):
+        parse_config(config=valid_cfg)
+
+
+def test_workday_transform_no_params_raises(valid_cfg: dict) -> None:
+    """WorkdayNormalizeTransform with no params at all raises."""
+    valid_cfg["transforms"] = [
+        {
+            "name": "workday_norm",
+            "class": "tsbricks.blocks.transforms.WorkdayNormalizeTransform",
+            "scope": "global",
+            "targets": ["y"],
+        }
+    ]
+    with pytest.raises(ValidationError, match="requires.*calendar_scope"):
+        parse_config(config=valid_cfg)
+
+
+def test_workday_transform_invalid_calendar_scope_raises(valid_cfg: dict) -> None:
+    """Invalid calendar_scope value raises ValidationError."""
+    valid_cfg["transforms"] = [
+        {
+            "name": "workday_norm",
+            "class": "tsbricks.blocks.transforms.WorkdayNormalizeTransform",
+            "scope": "global",
+            "targets": ["y"],
+            "params": {"calendar_scope": "weekly"},
+        }
+    ]
+    with pytest.raises(ValidationError, match="invalid calendar_scope"):
+        parse_config(config=valid_cfg)
