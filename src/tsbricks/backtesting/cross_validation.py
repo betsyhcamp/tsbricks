@@ -2,22 +2,63 @@
 
 from __future__ import annotations
 
+import warnings
+
 import pandas as pd
 
-from tsbricks.backtesting.schema import CrossValidationConfig, DataConfig
+from tsbricks.backtesting.schema import (
+    CrossValidationConfig,
+    DataConfig,
+    TestConfig,
+)
+
+
+def _split_at_origin(
+    df: pd.DataFrame,
+    origin: pd.Timestamp | int,
+    horizon: int,
+    is_integer_ds: bool,
+    offset: pd.DateOffset | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Timestamp | int]:
+    """Slice a DataFrame into train/eval sets around a single origin.
+
+    Args:
+        df: Panel DataFrame with a ``ds`` column.
+        origin: The cutoff point (inclusive in train).
+        horizon: Number of periods for the eval window.
+        is_integer_ds: Whether ``ds`` is integer-typed.
+        offset: Frequency offset for datetime ``ds`` (ignored when integer).
+
+    Returns:
+        ``(train, eval_set, end)`` where ``end`` is the upper bound of the
+        eval window (``origin + horizon`` for integers, ``origin + horizon *
+        offset`` for datetimes).
+    """
+    if is_integer_ds:
+        end = origin + horizon
+    else:
+        end = origin + horizon * offset
+    train = df[df["ds"] <= origin]
+    eval_set = df[(df["ds"] > origin) & (df["ds"] <= end)]
+    return train, eval_set, end
 
 
 def generate_folds(
     df: pd.DataFrame,
     cv_config: CrossValidationConfig,
     data_config: DataConfig,
-    test_config: dict | None = None,
-) -> tuple[dict[str, dict[str, pd.DataFrame]], None]:
+    test_config: TestConfig | None = None,
+) -> tuple[dict[str, dict[str, pd.DataFrame]], dict[str, pd.DataFrame] | None]:
     """Split a DataFrame into train/val folds based on explicit forecast origins.
 
     Each fold uses an expanding window: training data includes everything up to
     and including the forecast origin; validation data covers the next
     ``cv_config.horizon`` periods after the origin.
+
+    When ``test_config`` is provided, a test split is also generated using the
+    same windowing logic: train includes ``ds <= test_origin``, test includes
+    ``test_origin < ds <= test_origin + horizon periods``.  The test fold uses
+    ``cv_config.horizon`` (there is no separate test horizon).
 
     Supports both datetime and integer ``ds`` columns.  The mode is inferred
     from the column dtype and cross-validated against ``data_config.freq``.
@@ -27,13 +68,15 @@ def generate_folds(
             The ``ds`` column must be datetime or integer dtype.
         cv_config: Cross-validation configuration (explicit mode only in V1).
         data_config: Data configuration (used for ``freq``).
-        test_config: Reserved for future test-fold support. Unused in V1.
+        test_config: Optional test fold configuration.  When provided, the
+            test split is generated and returned as the second tuple element.
 
     Returns:
-        A tuple ``(cv_folds, None)`` where ``cv_folds`` is an ordered dict
-        of ``{"fold_X": {"train": df, "val": df}, ...}``.  Folds are ordered
-        chronologically by origin value (``fold_0`` has the earliest origin).
-        The second element is ``None`` (no test fold in V1).
+        A tuple ``(cv_folds, test_split)`` where ``cv_folds`` is an ordered
+        dict of ``{"fold_X": {"train": df, "val": df}, ...}``.  Folds are
+        ordered chronologically by origin value (``fold_0`` has the earliest
+        origin).  ``test_split`` is ``{"train": df, "test": df}`` when
+        ``test_config`` is provided, otherwise ``None``.
     """
     is_integer_ds = pd.api.types.is_integer_dtype(df["ds"])
     is_datetime_ds = pd.api.types.is_datetime64_any_dtype(df["ds"])
@@ -51,6 +94,7 @@ def generate_folds(
             f"The 'ds' column must be datetime or integer dtype, got {df['ds'].dtype}."
         )
 
+    offset: pd.DateOffset | None = None
     if is_integer_ds:
         origins = sorted(int(o) for o in cv_config.forecast_origins)
     else:
@@ -61,15 +105,50 @@ def generate_folds(
 
     cv_folds: dict[str, dict[str, pd.DataFrame]] = {}
     for i, origin in enumerate(origins):
-        if is_integer_ds:
-            val_end = origin + cv_config.horizon
-        else:
-            val_end = origin + cv_config.horizon * offset
-
-        train = df[df["ds"] <= origin]
-        val = df[(df["ds"] > origin) & (df["ds"] <= val_end)]
-
+        train, val, _ = _split_at_origin(
+            df, origin, cv_config.horizon, is_integer_ds, offset
+        )
         fold_key = f"fold_{i:0{pad_width}d}"
         cv_folds[fold_key] = {"train": train, "val": val}
 
-    return cv_folds, None
+    # ---- test split ----
+    test_split: dict[str, pd.DataFrame] | None = None
+    if test_config is not None:
+        if is_integer_ds:
+            test_origin = int(test_config.test_origin)
+        else:
+            test_origin = pd.Timestamp(test_config.test_origin)
+
+        train, test, test_end = _split_at_origin(
+            df, test_origin, cv_config.horizon, is_integer_ds, offset
+        )
+
+        # Runtime validation: test window must fit within available data
+        data_end = df["ds"].max()
+        if test_end > data_end:
+            raise ValueError(
+                f"Test window exceeds available data: test_end={test_end} "
+                f"but data ends at {data_end}. Need at least "
+                f"{cv_config.horizon} periods after test_origin={test_origin}."
+            )
+
+        # Overlap warning: test_origin falls within last CV validation window
+        last_origin = origins[-1]
+        _, _, last_val_end = _split_at_origin(
+            df, last_origin, cv_config.horizon, is_integer_ds, offset
+        )
+
+        if test_origin < last_val_end:
+            warnings.warn(
+                f"Test fold overlaps with cross-validation: test_origin "
+                f"({test_origin}) falls within the last CV validation window "
+                f"(origin={last_origin}, val_end={last_val_end}). The test "
+                f"fold should ideally not overlap with any cross-validation "
+                f"window.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        test_split = {"train": train, "test": test}
+
+    return cv_folds, test_split

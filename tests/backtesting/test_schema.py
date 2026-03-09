@@ -247,14 +247,12 @@ def test_empty_yaml_file_raises(tmp_path) -> None:
 
 
 def test_out_of_scope_fields_accepted(valid_cfg: dict) -> None:
-    """Out-of-scope V1 fields (test, parallelization, artifact_storage) parse as dicts."""
-    valid_cfg["test"] = {"enabled": True, "test_origin": "2024-01-01"}
+    """Out-of-scope V1 fields (parallelization, artifact_storage) parse as dicts."""
     valid_cfg["parallelization"] = {"parallel_eval_strategy": "across_series"}
     valid_cfg["artifact_storage"] = {"uv_lock_path": "./uv.lock"}
 
     cfg = parse_config(config=valid_cfg)
 
-    assert cfg.test == {"enabled": True, "test_origin": "2024-01-01"}
     assert cfg.parallelization == {"parallel_eval_strategy": "across_series"}
     assert cfg.artifact_storage == {"uv_lock_path": "./uv.lock"}
 
@@ -415,4 +413,192 @@ def test_workday_transform_invalid_calendar_scope_raises(valid_cfg: dict) -> Non
         }
     ]
     with pytest.raises(ValidationError, match="invalid calendar_scope"):
+        parse_config(config=valid_cfg)
+
+
+# ---- Test fold config ----
+
+
+def test_test_config_datetime_accepted(valid_cfg: dict) -> None:
+    """Valid test config with datetime test_origin parses correctly."""
+    valid_cfg["test"] = {"test_origin": "2024-01-01"}
+
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.test is not None
+    assert cfg.test.test_origin == "2024-01-01"
+
+
+def test_test_config_integer_accepted(valid_cfg: dict) -> None:
+    """Valid test config with integer test_origin parses correctly."""
+    valid_cfg["data"]["freq"] = 1
+    valid_cfg["cross_validation"]["forecast_origins"] = [10, 20]
+    valid_cfg["test"] = {"test_origin": 30}
+
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.test is not None
+    assert cfg.test.test_origin == 30
+
+
+def test_test_config_absent_is_none(valid_cfg: dict) -> None:
+    """Omitting test block results in test=None."""
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.test is None
+
+
+def test_test_config_null_is_none(valid_cfg: dict) -> None:
+    """Explicit test: null results in test=None."""
+    valid_cfg["test"] = None
+
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.test is None
+
+
+def test_test_origin_type_mismatch_str_vs_int(
+    valid_cfg: dict,
+) -> None:
+    """Integer test_origin with string forecast_origins raises."""
+    valid_cfg["test"] = {"test_origin": 50}
+
+    with pytest.raises(ValidationError, match="must be a string"):
+        parse_config(config=valid_cfg)
+
+
+def test_test_origin_type_mismatch_int_vs_str(
+    valid_cfg: dict,
+) -> None:
+    """String test_origin with integer forecast_origins raises."""
+    valid_cfg["data"]["freq"] = 1
+    valid_cfg["cross_validation"]["forecast_origins"] = [10, 20]
+    valid_cfg["test"] = {"test_origin": "2024-01-01"}
+
+    with pytest.raises(ValidationError, match="must be an integer"):
+        parse_config(config=valid_cfg)
+
+
+def test_test_origin_not_after_max_origin_raises(
+    valid_cfg: dict,
+) -> None:
+    """test_origin equal to max forecast_origin raises."""
+    valid_cfg["test"] = {"test_origin": "2023-07-01"}
+
+    with pytest.raises(ValidationError, match="strictly after"):
+        parse_config(config=valid_cfg)
+
+
+def test_test_origin_before_max_origin_raises(
+    valid_cfg: dict,
+) -> None:
+    """test_origin before max forecast_origin raises."""
+    valid_cfg["test"] = {"test_origin": "2023-01-01"}
+
+    with pytest.raises(ValidationError, match="strictly after"):
+        parse_config(config=valid_cfg)
+
+
+def test_test_origin_int_not_after_max_raises(
+    valid_cfg: dict,
+) -> None:
+    """Integer test_origin equal to max forecast_origin raises."""
+    valid_cfg["data"]["freq"] = 1
+    valid_cfg["cross_validation"]["forecast_origins"] = [10, 20]
+    valid_cfg["test"] = {"test_origin": 20}
+
+    with pytest.raises(ValidationError, match="strictly after"):
+        parse_config(config=valid_cfg)
+
+
+def test_test_horizon_rejected(valid_cfg: dict) -> None:
+    """Providing horizon in test block raises with helpful message."""
+    valid_cfg["test"] = {
+        "test_origin": "2024-01-01",
+        "horizon": 12,
+    }
+
+    with pytest.raises(ValidationError, match="test.horizon is not supported"):
+        parse_config(config=valid_cfg)
+
+
+def test_test_extra_field_rejected(valid_cfg: dict) -> None:
+    """Unknown fields in test block are rejected."""
+    valid_cfg["test"] = {
+        "test_origin": "2024-01-01",
+        "unknown_field": True,
+    }
+
+    with pytest.raises(ValidationError):
+        parse_config(config=valid_cfg)
+
+
+# ---- Mixed forecast_origins type rejection ----
+
+
+def test_mixed_forecast_origins_types_raises(
+    valid_cfg: dict,
+) -> None:
+    """Mixed str/int forecast_origins raises ValidationError."""
+    valid_cfg["cross_validation"]["forecast_origins"] = [
+        "2023-01-01",
+        20,
+    ]
+
+    with pytest.raises(ValidationError, match="mixed types"):
+        parse_config(config=valid_cfg)
+
+
+# ---- Datetime ordering is temporal, not lexicographic ----
+
+
+def test_test_origin_temporal_ordering(valid_cfg: dict) -> None:
+    """Non-normalized date strings are compared temporally."""
+    # "2023-9-01" sorts lexicographically before "2023-07-01"
+    # but temporally it's after — should be accepted
+    valid_cfg["cross_validation"]["forecast_origins"] = [
+        "2023-01-01",
+        "2023-07-01",
+    ]
+    valid_cfg["test"] = {"test_origin": "2023-9-01"}
+
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.test is not None
+
+
+# ---- Non-normalized date warnings ----
+
+
+def test_non_normalized_forecast_origins_warns(
+    valid_cfg: dict,
+) -> None:
+    """Non-normalized forecast_origins emit a UserWarning."""
+    valid_cfg["cross_validation"]["forecast_origins"] = [
+        "2023-1-01",
+        "2023-07-01",
+    ]
+
+    with pytest.warns(UserWarning, match="non-normalized"):
+        parse_config(config=valid_cfg)
+
+
+def test_non_normalized_test_origin_warns(
+    valid_cfg: dict,
+) -> None:
+    """Non-normalized test_origin emits a UserWarning."""
+    valid_cfg["test"] = {"test_origin": "2024-1-01"}
+
+    with pytest.warns(UserWarning, match="non-normalized"):
+        parse_config(config=valid_cfg)
+
+
+def test_normalized_dates_no_warning(valid_cfg: dict) -> None:
+    """Properly normalized dates do not emit warnings."""
+    valid_cfg["test"] = {"test_origin": "2024-01-01"}
+
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", category=UserWarning)
         parse_config(config=valid_cfg)
