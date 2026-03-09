@@ -2,11 +2,26 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any, Literal
 
+import pandas as pd
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+def _warn_non_normalized_dates(dates: list[str], field_name: str) -> None:
+    """Emit a warning for date strings not in YYYY-MM-DD format."""
+    non_normalized = [d for d in dates if d != pd.Timestamp(d).strftime("%Y-%m-%d")]
+    if non_normalized:
+        warnings.warn(
+            f"{field_name} contains non-normalized date strings: "
+            f"{non_normalized}. Consider using YYYY-MM-DD format "
+            f"(e.g., '2023-09-01' instead of '2023-9-01').",
+            UserWarning,
+            stacklevel=2,
+        )
 
 
 class DataConfig(BaseModel):
@@ -36,6 +51,22 @@ class CrossValidationConfig(BaseModel):
     # Future: parametric mode fields
     n_folds: int | None = None
     step_size: int | None = None
+
+    @field_validator("forecast_origins")
+    @classmethod
+    def _validate_homogeneous_types(
+        cls,
+        v: list[str | int],
+    ) -> list[str | int]:
+        types = {type(o) for o in v}
+        if len(types) > 1:
+            raise ValueError(
+                "forecast_origins must be all strings (datetime) or all "
+                f"integers, got mixed types: {types}."
+            )
+        if all(isinstance(o, str) for o in v):
+            _warn_non_normalized_dates([str(o) for o in v], "forecast_origins")
+        return v
 
 
 class TransformConfig(BaseModel):
@@ -117,6 +148,28 @@ class MetricsConfig(BaseModel):
     grouping_columns: list[str] | None = None
 
 
+class TestConfig(BaseModel):
+    """Test fold configuration.
+
+    The test fold uses ``cross_validation.horizon``; a separate
+    ``test.horizon`` is not supported.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    test_origin: str | int
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_horizon(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "horizon" in data:
+            raise ValueError(
+                "test.horizon is not supported; the test fold uses "
+                "cross_validation.horizon."
+            )
+        return data
+
+
 class BacktestConfig(BaseModel):
     """Top-level backtest configuration."""
 
@@ -126,10 +179,58 @@ class BacktestConfig(BaseModel):
     model: ModelConfig
     metrics: MetricsConfig
 
+    # Test fold (optional — presence controls whether test fold runs)
+    test: TestConfig | None = None
+
     # Out of scope for V1
-    test: dict[str, Any] | None = None
     parallelization: dict[str, Any] | None = None
     artifact_storage: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _validate_test_config(self) -> BacktestConfig:
+        if self.test is None:
+            return self
+
+        test_origin = self.test.test_origin
+        origins = self.cross_validation.forecast_origins
+
+        # Type consistency: test_origin must match forecast_origins type
+        origin_types_are_str = all(isinstance(o, str) for o in origins)
+        origin_types_are_int = all(isinstance(o, int) for o in origins)
+
+        if origin_types_are_str and not isinstance(test_origin, str):
+            raise ValueError(
+                "test.test_origin must be a string (datetime) to match "
+                "forecast_origins type."
+            )
+        if origin_types_are_int and not isinstance(test_origin, int):
+            raise ValueError(
+                "test.test_origin must be an integer to match forecast_origins type."
+            )
+
+        # Warn on non-normalized date strings
+        if origin_types_are_str and isinstance(test_origin, str):
+            _warn_non_normalized_dates([test_origin], "test.test_origin")
+
+        # Ordering: test_origin must be after all forecast_origins
+        if origin_types_are_int:
+            max_origin = max(int(o) for o in origins)
+            if int(test_origin) <= max_origin:
+                raise ValueError(
+                    f"test.test_origin ({test_origin}) must be strictly after "
+                    f"all forecast_origins (max={max_origin})."
+                )
+        else:
+            # Temporal comparison via pd.Timestamp for datetime origins
+            max_origin_ts = max(pd.Timestamp(o) for o in origins)
+            test_origin_ts = pd.Timestamp(test_origin)
+            if test_origin_ts <= max_origin_ts:
+                raise ValueError(
+                    f"test.test_origin ({test_origin}) must be strictly after "
+                    f"all forecast_origins (max={max_origin_ts})."
+                )
+
+        return self
 
 
 def parse_config(
