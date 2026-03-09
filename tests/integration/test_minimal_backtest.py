@@ -79,8 +79,58 @@ def test_minimal_backtest_end_to_end() -> None:
     # Config preserved
     assert results.config == cfg
 
-    # No test fold in V1
+    # No test fold when not configured
     assert results.test is None
+
+
+def _synthetic_monthly_panel_long() -> pd.DataFrame:
+    """Two-series monthly panel with a simple linear trend (36 months)."""
+    dates = pd.date_range("2022-01-01", periods=36, freq="MS")
+    rows = []
+    for uid, base in [("A", 10.0), ("B", 50.0)]:
+        for i, ds in enumerate(dates):
+            rows.append({"unique_id": uid, "ds": ds, "y": base + float(i)})
+    return pd.DataFrame(rows)
+
+
+def test_backtest_with_test_fold() -> None:
+    """End-to-end: backtest with a test fold produces TestResults."""
+    df = _synthetic_monthly_panel_long()
+    cfg = _minimal_config()
+    cfg["test"] = {"test_origin": "2023-07-01"}
+
+    results = run_backtest(config=cfg, df=df)
+
+    assert isinstance(results, BacktestResults)
+
+    # CV results still present and correct
+    assert len(results.cv.forecasts_per_fold) == 2
+
+    # Test results populated
+    assert results.test is not None
+    assert results.test.test_origin == pd.Timestamp("2023-07-01")
+
+    # Test metrics have fold_id="test"
+    test_metrics = results.test.metrics
+    assert len(test_metrics) > 0
+    assert (test_metrics["fold"] == "test").all()
+    assert list(test_metrics.columns) == [
+        "metric_name",
+        "unique_id",
+        "fold",
+        "aggregation",
+        "value",
+    ]
+
+    # Test forecasts populated
+    assert len(results.test.forecasts) > 0
+
+    # Train/test split stored
+    assert set(results.test.train_test_split.keys()) == {"train", "test"}
+
+    # Optional fields are None (core only)
+    assert results.test.fitted_values is None
+    assert results.test.transform_params is None
 
 
 # ---- integer ds integration test ----
@@ -154,5 +204,24 @@ def test_minimal_backtest_integer_ds() -> None:
     # Config preserved
     assert results.config == cfg
 
-    # No test fold in V1
+    # No test fold when not configured
     assert results.test is None
+
+
+def test_backtest_integer_ds_with_test_fold() -> None:
+    """End-to-end: integer ds backtest with test fold."""
+    df = _synthetic_integer_panel()
+    cfg = _integer_ds_config()
+    cfg["test"] = {"test_origin": 18}
+
+    results = run_backtest(config=cfg, df=df)
+
+    assert isinstance(results, BacktestResults)
+    assert results.test is not None
+    assert results.test.test_origin == 18
+
+    # Test metrics have fold_id="test"
+    assert (results.test.metrics["fold"] == "test").all()
+
+    # CV still works
+    assert len(results.cv.forecasts_per_fold) == 2
