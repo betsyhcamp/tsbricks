@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import warnings
+from collections.abc import Sequence
+
 import pandas as pd
 import pytest
 
 from tsbricks.backtesting.cross_validation import generate_folds
-from tsbricks.backtesting.schema import CrossValidationConfig
+from tsbricks.backtesting.schema import CrossValidationConfig, TestConfig
 
 
-def _cv_config(origins: list[str], horizon: int = 6) -> CrossValidationConfig:
+def _cv_config(origins: Sequence[str | int], horizon: int = 6) -> CrossValidationConfig:
     return CrossValidationConfig(
         mode="explicit", horizon=horizon, forecast_origins=origins
     )
@@ -260,3 +263,218 @@ def test_freq_one_with_datetime_ds_raises(monthly_panel, integer_data_config):
     """freq=1 with datetime ds column raises ValueError."""
     with pytest.raises(ValueError, match="freq=1 requires an integer ds column"):
         generate_folds(monthly_panel, _cv_config([10], horizon=3), integer_data_config)
+
+
+# ---- test fold: basic structure ----
+
+
+def _test_config(origin):
+    return TestConfig(test_origin=origin)
+
+
+def test_test_split_returned_when_config_present(monthly_panel, data_config):
+    """When test_config is provided, test_split is a dict with train/test keys."""
+    _, test_split = generate_folds(
+        monthly_panel,
+        _cv_config(["2023-01-01"], horizon=3),
+        data_config,
+        test_config=_test_config("2023-07-01"),
+    )
+
+    assert test_split is not None
+    assert set(test_split.keys()) == {"train", "test"}
+
+
+def test_test_split_none_when_config_absent(monthly_panel, data_config):
+    """When test_config is None, test_split is None."""
+    _, test_split = generate_folds(
+        monthly_panel, _cv_config(["2023-01-01"], horizon=3), data_config
+    )
+
+    assert test_split is None
+
+
+# ---- test fold: split boundaries (datetime) ----
+
+
+def test_test_train_includes_test_origin(monthly_panel, data_config):
+    """Test train set includes ds <= test_origin."""
+    test_origin = "2023-07-01"
+    _, test_split = generate_folds(
+        monthly_panel,
+        _cv_config(["2023-01-01"], horizon=3),
+        data_config,
+        test_config=_test_config(test_origin),
+    )
+
+    train = test_split["train"]
+    assert pd.Timestamp(test_origin) in train["ds"].values
+    assert (train["ds"] <= pd.Timestamp(test_origin)).all()
+
+
+def test_test_set_starts_after_test_origin(monthly_panel, data_config):
+    """Test set contains only dates after test_origin."""
+    test_origin = "2023-07-01"
+    _, test_split = generate_folds(
+        monthly_panel,
+        _cv_config(["2023-01-01"], horizon=3),
+        data_config,
+        test_config=_test_config(test_origin),
+    )
+
+    test = test_split["test"]
+    assert (test["ds"] > pd.Timestamp(test_origin)).all()
+
+
+def test_test_set_ends_at_origin_plus_horizon(monthly_panel, data_config):
+    """Test set extends exactly horizon periods past test_origin."""
+    test_origin = "2023-07-01"
+    horizon = 3
+    _, test_split = generate_folds(
+        monthly_panel,
+        _cv_config(["2023-01-01"], horizon=horizon),
+        data_config,
+        test_config=_test_config(test_origin),
+    )
+
+    test = test_split["test"]
+    expected_end = pd.Timestamp(
+        test_origin
+    ) + horizon * pd.tseries.frequencies.to_offset("MS")
+    assert test["ds"].max() == expected_end
+
+
+def test_test_set_row_count_per_series(monthly_panel, data_config):
+    """Each series in the test set has exactly horizon rows."""
+    test_origin = "2023-07-01"
+    horizon = 3
+    _, test_split = generate_folds(
+        monthly_panel,
+        _cv_config(["2023-01-01"], horizon=horizon),
+        data_config,
+        test_config=_test_config(test_origin),
+    )
+
+    test = test_split["test"]
+    for uid in ["A", "B"]:
+        assert len(test[test["unique_id"] == uid]) == horizon
+
+
+# ---- test fold: split boundaries (integer) ----
+
+
+def test_integer_test_split_boundaries(integer_panel, integer_data_config):
+    """Integer test split: train includes origin, test starts after."""
+    test_origin = 18
+    horizon = 3
+    _, test_split = generate_folds(
+        integer_panel,
+        _cv_config([10], horizon=horizon),
+        integer_data_config,
+        test_config=_test_config(test_origin),
+    )
+
+    train = test_split["train"]
+    test = test_split["test"]
+
+    assert train["ds"].max() == test_origin
+    assert test["ds"].min() == test_origin + 1
+    assert test["ds"].max() == test_origin + horizon
+
+
+def test_integer_test_set_row_count_per_series(integer_panel, integer_data_config):
+    """Each series in the integer test set has exactly horizon rows."""
+    test_origin = 18
+    horizon = 3
+    _, test_split = generate_folds(
+        integer_panel,
+        _cv_config([10], horizon=horizon),
+        integer_data_config,
+        test_config=_test_config(test_origin),
+    )
+
+    test = test_split["test"]
+    for uid in ["A", "B"]:
+        assert len(test[test["unique_id"] == uid]) == horizon
+
+
+# ---- test fold: runtime validation ----
+
+
+def test_test_window_exceeds_data_raises(monthly_panel, data_config):
+    """Raise ValueError when test_origin + horizon exceeds available data."""
+    with pytest.raises(ValueError, match="Test window exceeds available data"):
+        generate_folds(
+            monthly_panel,
+            _cv_config(["2023-01-01"], horizon=6),
+            data_config,
+            test_config=_test_config("2023-10-01"),
+        )
+
+
+def test_integer_test_window_exceeds_data_raises(integer_panel, integer_data_config):
+    """Raise ValueError when integer test_origin + horizon exceeds data."""
+    with pytest.raises(ValueError, match="Test window exceeds available data"):
+        generate_folds(
+            integer_panel,
+            _cv_config([10], horizon=10),
+            integer_data_config,
+            test_config=_test_config(20),
+        )
+
+
+# ---- test fold: overlap warning ----
+
+
+def test_overlap_warning_emitted(monthly_panel, data_config):
+    """Warning emitted when test_origin falls within last CV validation window."""
+    with pytest.warns(UserWarning, match="Test fold overlaps with cross-validation"):
+        generate_folds(
+            monthly_panel,
+            _cv_config(["2023-01-01"], horizon=6),
+            data_config,
+            test_config=_test_config("2023-04-01"),
+        )
+
+
+def test_no_overlap_warning_when_after_cv(monthly_panel, data_config):
+    """No warning when test_origin is after the last CV validation window."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", category=UserWarning)
+        generate_folds(
+            monthly_panel,
+            _cv_config(["2023-01-01"], horizon=3),
+            data_config,
+            test_config=_test_config("2023-07-01"),
+        )
+
+
+def test_integer_overlap_warning_emitted(integer_panel, integer_data_config):
+    """Warning emitted for integer ds when test_origin overlaps last CV window."""
+    with pytest.warns(UserWarning, match="Test fold overlaps with cross-validation"):
+        generate_folds(
+            integer_panel,
+            _cv_config([10], horizon=5),
+            integer_data_config,
+            test_config=_test_config(13),
+        )
+
+
+# ---- test fold: cv folds unaffected ----
+
+
+def test_cv_folds_unchanged_with_test_config(monthly_panel, data_config):
+    """CV folds are identical whether or not test_config is provided."""
+    cv_config = _cv_config(["2023-01-01", "2023-04-01"], horizon=3)
+
+    folds_without, _ = generate_folds(monthly_panel, cv_config, data_config)
+    folds_with, _ = generate_folds(
+        monthly_panel, cv_config, data_config, test_config=_test_config("2023-07-01")
+    )
+
+    assert list(folds_without.keys()) == list(folds_with.keys())
+    for key in folds_without:
+        pd.testing.assert_frame_equal(
+            folds_without[key]["train"], folds_with[key]["train"]
+        )
+        pd.testing.assert_frame_equal(folds_without[key]["val"], folds_with[key]["val"])

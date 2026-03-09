@@ -344,23 +344,35 @@ The forecast horizon is constant across all folds within a run, including the te
 
 ### 5.5 Test Fold
 
-The system supports a separate test fold that is structurally isolated from the cross-validation folds. The test fold is processed as a completely separate phase after cross-validation: the model is trained on all data up to the test origin, forecasts are generated for the same horizon, the same transforms and inverse transforms are applied, and the same metrics are computed. Test results are stored in a separate dataclass (`TestResults`) to prevent accidental mixing with CV results during model selection.
+The system supports a separate test fold that is structurally isolated from the cross-validation folds. The test fold is processed as a completely separate phase after cross-validation: the model is trained independently from scratch on all data up to the test origin (`ds <= test_origin`), forecasts are generated for the same horizon, the same transforms and inverse transforms are applied (re-fitted on the test training window), and the same metrics are computed. Test results are stored in a separate dataclass (`TestResults`) to prevent accidental mixing with CV results during model selection.
 
-**`test_origin` is required when `test.enabled: true`.** The test origin is the forecast origin of the test period — the test set begins at the first time step after the test origin. This is consistent with the CV origin terminology: a "forecast origin" is always the last training observation, and the forecast begins immediately after it.
-
-**`test_origin` serves as the CV/test boundary.** When test is enabled, parametric CV computes fold origins backward from `test_origin` (see section 5.2). This guarantees that no CV validation window overlaps with the test period.
-
-**Validation:** `test_origin + horizon <= data_end`. The test fold's validation window must fit within the available data.
-
-**Warning when `test_origin` provided but test disabled.** If `test.enabled: false` but `test_origin` is provided, the system logs a warning to alert the user that the test origin is being ignored. This is not an error — it may be intentional during iterative development.
-
-The test fold is enabled by default but can be disabled by the user. When disabled, test result fields are `None`.
+**Config shape.** The `test` block is optional. Presence of `test.test_origin` controls whether the test fold runs — there is no `enabled` flag. When the `test` block is absent or `null`, no test fold is run and `BacktestResults.test` is `None`.
 
 ```yaml
 test:
-  enabled: true
   test_origin: "2024-06-01"
+  # horizon inherited from cross_validation.horizon
 ```
+
+**`test_origin` is the forecast origin of the test period.** The test set begins at the first time step after the test origin. This is consistent with the CV origin terminology: a "forecast origin" is always the last training observation, and the forecast begins immediately after it. The test window boundaries are identical to CV: `test_origin < ds <= test_origin + horizon periods`.
+
+**`test_origin` must be strictly after all CV `forecast_origins`.** This is validated at config parse time.
+
+**`test_origin` serves as the CV/test boundary.** When parametric CV is implemented, fold origins are computed backward from `test_origin` (see section 5.2). This guarantees that no CV validation window overlaps with the test period.
+
+**Overlap warning.** The test origin may fall within the validation window of the last CV fold (e.g., when `test_origin < max(forecast_origins) + horizon periods`). This is allowed but triggers a `warnings.warn()` because the test fold should ideally not overlap with any cross-validation window.
+
+**Validation:** `test_origin + horizon <= data_end`. The test fold's validation window must fit within the available data. Validated at runtime in `generate_folds()`.
+
+**Horizon inheritance.** The test fold always uses `cross_validation.horizon`. A separate `test.horizon` is not supported — if the user provides one, the system raises a validation error: `"test.horizon is not supported; the test fold uses cross_validation.horizon."`
+
+**Fold ID.** The test fold uses `fold_id="test"` in the metrics DataFrame.
+
+**Split key names.** The test split uses `{"train": df, "test": df}` (not `"val"`) to distinguish from CV splits which use `{"train": df, "val": df}`.
+
+**Error handling.** If the test fold fails, the entire `run_backtest()` call fails with a hard error — same behavior as CV fold failures.
+
+**Type rules.** `test_origin` follows the same type rules as CV `forecast_origins`: datetime string when `ds` is datetime, integer when `ds` is integer. Same `freq` consistency rules apply.
 
 ### 5.6 Internal Representation
 
