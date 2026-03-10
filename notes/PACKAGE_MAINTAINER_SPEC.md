@@ -29,6 +29,7 @@ tsbricks/
 │   ├── dataio/           # Data loading and format utilities
 │   │   ├── __init__.py
 │   │   └── ...
+│   ├── metadata.py       # Environment metadata collection (git hash, uv.lock info)
 │   └── utils/            # Shared utility functions
 │       ├── __init__.py
 │       └── ...
@@ -208,7 +209,15 @@ from tsbricks.blocks.metrics import mae, rmse, mape, rmsse, difference_scaled_bi
 from tsbricks.blocks.diagnostics import acf, pacf
 ```
 
-### 4.7 Output Dataclasses
+### 4.7 Metadata Collection
+
+```python
+from tsbricks.blocks.metadata import get_git_hash, get_uv_lock_info, MetadataWarning
+```
+
+These are public composable step functions for capturing environment metadata. They are called internally by `run_backtest()` and will be called by a future `run_forecast()`. Power users can call them directly in custom workflows. See `spec_initial_metadata.md` for the full specification.
+
+### 4.8 Output Dataclasses
 
 ```python
 from tsbricks.backtesting.results import BacktestResults, CVResults, TestResults
