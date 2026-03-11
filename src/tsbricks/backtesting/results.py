@@ -105,12 +105,12 @@ class BacktestResults:
         horizon: Number of forecast steps per fold.
         config: Raw configuration dict that was passed to
             ``run_backtest``.
-        git_hash: Repository commit hash at run time. ``None`` until
-            metadata population is implemented.
-        uv_lock: Lockfile contents for reproducibility. ``None`` until
-            metadata population is implemented.
+        git_hash: Full 40-character SHA of HEAD at run time.
+            ``None`` if git is unavailable.
+        uv_lock_info: Dict with ``path`` and ``sha256`` of the
+            uv.lock file. ``None`` if uv.lock is not found.
         run_summary: Aggregated warnings and error counts. ``None``
-            until metadata population is implemented.
+            until error-handling infrastructure is implemented.
         test: Test fold results. ``None`` when the test fold is
             disabled.
         extra: Escape-hatch dict for user-defined data.
@@ -121,10 +121,12 @@ class BacktestResults:
     horizon: int
     config: dict
 
-    # Metadata — populated in later versions
+    # Metadata
     git_hash: str | None = None
-    uv_lock: str | None = None
-    run_summary: dict | None = None
+    uv_lock_info: dict | None = None
+    run_summary: dict | None = (
+        None  # Deferred until error-handling infrastructure exists
+    )
 
     # Test results (None when test fold disabled)
     test: TestResults | None = None
