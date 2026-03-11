@@ -32,3 +32,11 @@ metrics:
     - name: rmsse
       callable: tsbricks.blocks.metrics.rmsse
       type: context_aware
+
+# Optional: test fold for held-out evaluation after cross-validation.
+# When present, the model is re-trained from scratch on ds <= test_origin
+# and evaluated over the next cross_validation.horizon periods.
+# Remove this block (or set to null) to skip the test fold.
+test:
+  test_origin: "2024-01-01"
+  # horizon inherited from cross_validation.horizon

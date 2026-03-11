@@ -995,8 +995,8 @@ parallelization:
   eval_n_workers: 4
 
 # --- Artifact Storage ---
-artifact_storage:
-  uv_lock_path: ./uv.lock
+# uv.lock is auto-discovered from the git repo root. See spec_initial_metadata.md.
+artifact_storage: {}
 ```
 
 **V1 changes from initial design:**
@@ -1065,9 +1065,9 @@ class BacktestResults:
     # --- Shared metadata ---
     horizon: int
     config: dict
-    git_hash: str
-    uv_lock: str
-    run_summary: dict
+    git_hash: str | None = None       # Full 40-char SHA; None if git unavailable
+    uv_lock_info: dict | None = None  # {"path": ..., "sha256": ...}; None if uv.lock not found
+    run_summary: dict | None = None   # Deferred until error-handling infrastructure exists
 
     # --- Test results (None if test fold disabled) ---
     test: TestResults | None = None
@@ -1138,36 +1138,36 @@ The system provides helper utilities that make it convenient to extract artifact
 
 The following artifacts are available for logging per run:
 
-| Artifact                         | Source                           | Description                                 |
-| -------------------------------- | -------------------------------- | ------------------------------------------- |
-| YAML config                      | `config`                         | Full configuration for reproducibility      |
-| **CV artifacts**                 |                                  |                                             |
-| CV train/val splits              | `cv.train_val_splits_per_fold`   | Per-fold training and validation DataFrames |
-| CV forecasts                     | `cv.forecasts_per_fold`          | Per-fold ypred aligned to y_true            |
-| CV fitted values                 | `cv.fitted_values`               | In-sample fitted values, original scale     |
-| CV fitted values (model scale)   | `cv.fitted_values_model_scale`   | In-sample fitted values, transformed scale  |
-| CV metric values                 | `cv.metrics`                     | Per-series, grouped, and global metrics     |
-| CV instability flags             | `cv.metric_instability_flags`    | Flags for degenerate metric computations    |
-| CV grouped metrics               | `cv.metric_groups`               | Metrics by grouping columns                 |
-| CV forecast origins              | `cv.fold_origins`                | Dates defining each CV fold                 |
-| CV transform params              | `cv.transform_params`            | Fitted/fixed parameters per fold per series |
-| CV fitted models                 | `cv.fitted_models`               | Serialized model per fold (when enabled)    |
-| **Test artifacts**               |                                  |                                             |
-| Test train/test split            | `test.train_test_split`          | Training and test DataFrames                |
-| Test forecasts                   | `test.forecasts`                 | ypred aligned to y_true                     |
-| Test fitted values               | `test.fitted_values`             | In-sample fitted values, original scale     |
-| Test fitted values (model scale) | `test.fitted_values_model_scale` | In-sample fitted values, transformed scale  |
-| Test metric values               | `test.metrics`                   | Per-series, grouped, and global metrics     |
-| Test instability flags           | `test.metric_instability_flags`  | Flags for degenerate metric computations    |
-| Test grouped metrics             | `test.metric_groups`             | Metrics by grouping columns                 |
-| Test origin                      | `test.test_origin`               | Forecast origin date for test fold          |
-| Test transform params            | `test.transform_params`          | Fitted/fixed parameters per series          |
-| Test fitted model                | `test.fitted_model`              | Serialized model (when enabled)             |
-| **Shared metadata**              |                                  |                                             |
-| Forecast horizon                 | `horizon`                        | Fixed horizon for the run                   |
-| uv.lock                          | `uv_lock`                        | Dependency lockfile contents                |
-| Git hash                         | `git_hash`                       | Code version identifier                     |
-| Run summary                      | `run_summary`                    | Success/failure/warning counts and details  |
+| Artifact                         | Source                           | Description                                                                                         |
+| -------------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------- |
+| YAML config                      | `config`                         | Full configuration for reproducibility                                                              |
+| **CV artifacts**                 |                                  |                                                                                                     |
+| CV train/val splits              | `cv.train_val_splits_per_fold`   | Per-fold training and validation DataFrames                                                         |
+| CV forecasts                     | `cv.forecasts_per_fold`          | Per-fold ypred aligned to y_true                                                                    |
+| CV fitted values                 | `cv.fitted_values`               | In-sample fitted values, original scale                                                             |
+| CV fitted values (model scale)   | `cv.fitted_values_model_scale`   | In-sample fitted values, transformed scale                                                          |
+| CV metric values                 | `cv.metrics`                     | Per-series, grouped, and global metrics                                                             |
+| CV instability flags             | `cv.metric_instability_flags`    | Flags for degenerate metric computations                                                            |
+| CV grouped metrics               | `cv.metric_groups`               | Metrics by grouping columns                                                                         |
+| CV forecast origins              | `cv.fold_origins`                | Dates defining each CV fold                                                                         |
+| CV transform params              | `cv.transform_params`            | Fitted/fixed parameters per fold per series                                                         |
+| CV fitted models                 | `cv.fitted_models`               | Serialized model per fold (when enabled)                                                            |
+| **Test artifacts**               |                                  |                                                                                                     |
+| Test train/test split            | `test.train_test_split`          | Training and test DataFrames                                                                        |
+| Test forecasts                   | `test.forecasts`                 | ypred aligned to y_true                                                                             |
+| Test fitted values               | `test.fitted_values`             | In-sample fitted values, original scale                                                             |
+| Test fitted values (model scale) | `test.fitted_values_model_scale` | In-sample fitted values, transformed scale                                                          |
+| Test metric values               | `test.metrics`                   | Per-series, grouped, and global metrics                                                             |
+| Test instability flags           | `test.metric_instability_flags`  | Flags for degenerate metric computations                                                            |
+| Test grouped metrics             | `test.metric_groups`             | Metrics by grouping columns                                                                         |
+| Test origin                      | `test.test_origin`               | Forecast origin date for test fold                                                                  |
+| Test transform params            | `test.transform_params`          | Fitted/fixed parameters per series                                                                  |
+| Test fitted model                | `test.fitted_model`              | Serialized model (when enabled)                                                                     |
+| **Shared metadata**              |                                  |                                                                                                     |
+| Forecast horizon                 | `horizon`                        | Fixed horizon for the run                                                                           |
+| uv.lock info                     | `uv_lock_info`                   | Dict with `path` and `sha256` of uv.lock file. `None` if not found. See `spec_initial_metadata.md`. |
+| Git hash                         | `git_hash`                       | Full 40-char SHA of HEAD. `None` if git unavailable. See `spec_initial_metadata.md`.                |
+| Run summary                      | `run_summary`                    | Deferred — `None` until error-handling infrastructure exists                                        |
 
 ______________________________________________________________________
 
