@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from tsbricks.blocks.metadata import get_git_hash, get_uv_lock_info
 from tsbricks.backtesting.cross_validation import generate_folds
 from tsbricks.backtesting.evaluation import evaluate_metrics
 from tsbricks.backtesting.results import BacktestResults, CVResults, TestResults
@@ -43,6 +44,10 @@ def run_backtest(
     """
     if df is None:
         raise ValueError("A DataFrame must be provided via the 'df' parameter.")
+
+    # Collect environment metadata before any computation
+    git_hash = get_git_hash()
+    uv_lock_info = get_uv_lock_info()
 
     backtest_config = parse_config(config_path=config_path, config=config)
 
@@ -168,5 +173,7 @@ def run_backtest(
         cv=cv_results,
         horizon=backtest_config.cross_validation.horizon,
         config=raw_config,
+        git_hash=git_hash,
+        uv_lock_info=uv_lock_info,
         test=test_results,
     )
