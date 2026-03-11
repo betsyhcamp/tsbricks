@@ -92,18 +92,15 @@ def test_get_uv_lock_info_warns_when_auto_discover_fails():
     assert result is None
 
 
-def test_get_uv_lock_info_auto_discovers_from_git_root(tmp_path):
+def test_get_uv_lock_info_auto_discovers_from_git_root(tmp_path, fake_git_toplevel):
     """Auto-discovery finds uv.lock at the git repo root without an explicit path."""
     lock_file = tmp_path / "uv.lock"
     lock_file.write_text("auto-discovered content")
     expected_sha = hashlib.sha256(b"auto-discovered content").hexdigest()
 
-    def fake_run(cmd, **kwargs):
-        result = subprocess.CompletedProcess(cmd, 0)
-        result.stdout = str(tmp_path) + "\n"
-        return result
-
-    with patch("tsbricks.blocks.metadata.subprocess.run", side_effect=fake_run):
+    with patch(
+        "tsbricks.blocks.metadata.subprocess.run", side_effect=fake_git_toplevel
+    ):
         result = get_uv_lock_info()
 
     assert result is not None
@@ -111,15 +108,11 @@ def test_get_uv_lock_info_auto_discovers_from_git_root(tmp_path):
     assert result["sha256"] == expected_sha
 
 
-def test_get_uv_lock_info_auto_discover_warns_when_lock_missing(tmp_path):
+def test_get_uv_lock_info_auto_discover_warns_when_lock_missing(fake_git_toplevel):
     """Warns when auto-discovery finds the git root but uv.lock doesn't exist there."""
-
-    def fake_run(cmd, **kwargs):
-        result = subprocess.CompletedProcess(cmd, 0)
-        result.stdout = str(tmp_path) + "\n"
-        return result
-
-    with patch("tsbricks.blocks.metadata.subprocess.run", side_effect=fake_run):
+    with patch(
+        "tsbricks.blocks.metadata.subprocess.run", side_effect=fake_git_toplevel
+    ):
         with pytest.warns(MetadataWarning, match="uv.lock not found"):
             result = get_uv_lock_info()
     assert result is None
