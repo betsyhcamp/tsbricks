@@ -21,7 +21,7 @@ def test_get_git_hash_returns_full_sha():
     result = get_git_hash()
     assert result is not None
     assert len(result) == 40
-    assert all(c in "0123456789abcdef" for c in result)
+    assert all(char in "0123456789abcdef" for char in result)
 
 
 def test_get_git_hash_returns_none_when_git_not_installed():

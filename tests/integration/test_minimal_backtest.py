@@ -82,6 +82,18 @@ def test_minimal_backtest_end_to_end() -> None:
     # No test fold when not configured
     assert results.test is None
 
+    # Metadata populated
+    assert results.git_hash is not None
+    assert len(results.git_hash) == 40
+    assert all(c in "0123456789abcdef" for c in results.git_hash)
+
+    # uv_lock_info is a dict with expected keys if uv.lock exists, else None
+    if results.uv_lock_info is not None:
+        assert set(results.uv_lock_info.keys()) == {"path", "sha256"}
+
+    # run_summary deferred
+    assert results.run_summary is None
+
 
 def _synthetic_monthly_panel_long() -> pd.DataFrame:
     """Two-series monthly panel with a simple linear trend (36 months)."""
