@@ -776,11 +776,15 @@ Metrics may return either a `float` or a `Tuple[float, bool]` where the boolean 
 Each metric specifies an aggregation mode in the config:
 
 - **`per_fold_mean`**: The metric is computed per fold, then averaged across folds.
-- **`pooled`**: Actuals and predictions (and training data for context-aware metrics) are concatenated across folds before computing the metric once.
+- **`pooled`**: Actuals and predictions (and training data for context-aware metrics) are concatenated across folds before computing the metric once. For context-aware metrics with pooled aggregation, the engine uses the first fold's training data (most conservative) and emits a warning — pooled computation of context-aware metrics is not well-defined theoretically in rolling forecast origin backtesting. See `spec_pooled_grouped_error_metrics.md` §7.2.
 
 ### 8.4 Per-Series, Group, and Global Metrics
 
-The system supports per-series metrics (e.g., RMSSE computed for each `unique_id`), group metrics (e.g., WAPE computed across a product category), and global metrics (e.g., WRMSSE computed across all series with aggregation weights). All three can coexist in a single run. The metric callable itself determines whether it operates per-series, per-group, or globally; the system routes data accordingly based on the `scope` field.
+The system supports per-series metrics (e.g., RMSSE computed for each `unique_id`), group metrics (e.g., WAPE computed across a product category), and global metrics (e.g., WRMSSE computed across all series with aggregation weights). All three can coexist in a single run. The system routes data based on the `scope` field:
+
+- **`per_series`**: Metric computed independently per `unique_id`. The callable receives numpy arrays for a single series.
+- **`group`**: Metric computed across all series sharing a group attribute. The engine partitions `unique_id`s using `grouping_df` (a separate DataFrame mapping `unique_id` to grouping columns) and concatenates arrays within each group.
+- **`global`**: Two-stage metric across all series. Stage 1: engine computes per-series values using the base metric callable. Stage 2: engine calls a user-provided `aggregation_callable` with the per-series values and per-fold weights from `weights_df`. See `spec_pooled_grouped_error_metrics.md` §6 for details.
 
 A single metric callable can be defined multiple times with different scopes to compute the same metric at different levels of granularity within a single run:
 
@@ -803,19 +807,32 @@ metrics:
 
 ### 8.5 Metric Grouping
 
-Metrics can be computed at intermediate grouping levels (e.g., by product class, country) in addition to per-series and global. Grouping columns can be specified at two levels:
+Metrics can be computed at intermediate grouping levels (e.g., by product class, country) in addition to per-series and global. Grouping columns are provided via a separate `grouping_df` parameter (not from the input forecast DataFrame) to avoid column naming conflicts and model input pollution. See `spec_pooled_grouped_error_metrics.md` §3.1 for the `grouping_df` parameter design.
+
+Grouping columns can be specified at two levels:
 
 - **Per metric definition**: A `grouping_columns` field on an individual metric definition applies only to that metric. This is required when the metric's `scope` is `group`.
 - **Top-level default**: A `grouping_columns` field at the top level of the `metrics` config applies to all metric definitions that have `scope: group` but do not specify their own `grouping_columns`. Per-definition values override the top-level default.
 
-### 8.6 Multiple Metrics Per Run
+### 8.6 Param Resolvers
+
+Metrics may require fold-dependent per-series parameters computed from the fold's training data (e.g., a group-level fallback scale for RMSSE when a series has insufficient history). These are declared via `param_resolvers` — callable functions that run once per fold on the training data and return `{unique_id: scalar}`. The engine resolves the per-series value before calling the metric callable, which receives a scalar. See `spec_pooled_grouped_error_metrics.md` §4.4–4.5.
+
+### 8.7 Weights
+
+Global-scope metrics with an `aggregation_callable` (e.g., WRMSSE) require per-series weights. Weights are precomputed by the user and passed as `weights_df` — a DataFrame with columns `[unique_id, forecast_origin, raw_weight]` where `forecast_origin` corresponds to forecast origin dates. The engine looks up the correct weights for each fold. The aggregation callable normalizes internally (dividing by sum of weights). For group scope, the engine subsets weights to the group before calling the aggregation callable, so normalization naturally scopes to the group. See `spec_pooled_grouped_error_metrics.md` §3.2 and §6.3.
+
+### 8.8 Multiple Metrics Per Run
 
 A single run can specify multiple metrics. All metrics are computed on the same backtest results.
 
-### 8.7 Metrics Configuration
+### 8.9 Metrics Configuration
 
 ```yaml
 metrics:
+  grouping_source: path/to/grouping.parquet  # optional, for YAML-driven batch runs
+  weights_source: path/to/weights.parquet    # optional, for YAML-driven batch runs
+  grouping_columns: [country]                # default for group-scoped metrics
   definitions:
     - name: rmsse
       callable: tsbricks.blocks.metrics.rmsse
@@ -836,12 +853,19 @@ metrics:
         scale_stat: rms
 
     - name: wrmsse
-      callable: tsbricks.blocks.metrics.wrmsse
+      callable: tsbricks.blocks.metrics.rmsse
       type: context_aware
       scope: global
-      aggregation: pooled
+      aggregation: per_fold_mean
       params:
-        weights_path: gs://my-bucket/data/weights.parquet
+        m: 1
+        min_history_length: 24
+      param_resolvers:
+        fallback_scale:
+          callable: tsbricks.blocks.metrics.group_median_scale
+          params: { m: 1 }
+          grouping_columns: [product_category]
+      aggregation_callable: tsbricks.blocks.metrics.weighted_mean
 
     - name: mae
       callable: tsbricks.blocks.metrics.mae
@@ -861,12 +885,10 @@ metrics:
       type: simple
       scope: group
       aggregation: per_fold_mean
-      # uses top-level default grouping_columns
-
-  grouping_columns: [country]  # default for group-scoped metrics
+      # uses top-level default grouping_columns: [country]
 ```
 
-### 8.8 Built-in Metrics
+### 8.10 Built-in Metrics
 
 The system ships with built-in implementations of common metrics: MAE, RMSE, MAPE, RMSSE, and difference-scaled bias. Users can provide custom metric callables following the same conventions.
 
@@ -968,6 +990,9 @@ model:
 
 # --- Metrics ---
 metrics:
+  grouping_source: path/to/grouping.parquet  # optional, for group-scoped metrics
+  weights_source: path/to/weights.parquet    # optional, for global-scoped metrics with aggregation_callable
+  grouping_columns: [country]                # default for group-scoped metrics
   definitions:
     - name: rmsse
       callable: tsbricks.blocks.metrics.rmsse
@@ -977,11 +1002,19 @@ metrics:
       params:
         m: 1
     - name: wrmsse
-      callable: tsbricks.blocks.metrics.wrmsse
+      callable: tsbricks.blocks.metrics.rmsse
       type: context_aware
       scope: global
-      aggregation: pooled
-      params: {}
+      aggregation: per_fold_mean
+      params:
+        m: 1
+        min_history_length: 24
+      param_resolvers:
+        fallback_scale:
+          callable: tsbricks.blocks.metrics.group_median_scale
+          params: { m: 1 }
+          grouping_columns: [product_category]
+      aggregation_callable: tsbricks.blocks.metrics.weighted_mean
     - name: mae
       callable: tsbricks.blocks.metrics.mae
       type: simple
@@ -1084,14 +1117,17 @@ Both `fitted_values` and `fitted_values_model_scale` share the same DataFrame sc
 
 The `metrics` DataFrame uses a long format that accommodates per-series, grouped, and global metrics in a single table:
 
-| Column               | Description                                                             |
-| -------------------- | ----------------------------------------------------------------------- |
-| `metric_name`        | Name of the metric (e.g., `rmsse`, `wrmsse`, `mae`)                     |
-| `unique_id`          | Series identifier, or `None` for global/grouped metrics                 |
-| `fold`               | Fold identifier (e.g., `fold_0`) or `pooled`                            |
-| `aggregation`        | One of `per_series`, `group`, `global`                                  |
-| `value`              | Computed metric value                                                   |
-| *(grouping columns)* | Optional columns (e.g., `product_class`, `country`) for grouped metrics |
+| Column                 | Description                                                                                     |
+| ---------------------- | ----------------------------------------------------------------------------------------------- |
+| `metric_name`          | Name of the metric (e.g., `rmsse`, `wrmsse`, `mae`)                                             |
+| `unique_id`            | Series identifier (per_series), group label (group), or `None` (global)                         |
+| `fold`                 | Fold identifier (e.g., `fold_0`, `test`) or `pooled` for pooled aggregation                     |
+| `scope`                | One of `per_series`, `group`, `global`                                                          |
+| `grouping_column_name` | Name of the grouping column for group scope (e.g., `product_category`), `None` for other scopes |
+| `aggregation`          | One of `per_fold_mean`, `pooled`                                                                |
+| `value`                | Computed metric value                                                                           |
+
+See `spec_pooled_grouped_error_metrics.md` §8 for full details on the output schema, backward compatibility, and example output.
 
 ### 11.3 Run Summary
 
