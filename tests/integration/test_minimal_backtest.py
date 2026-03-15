@@ -349,3 +349,93 @@ def test_run_backtest_grouping_df_missing_grouping_column_raises() -> None:
 
     with pytest.raises(ValueError, match="missing required grouping columns"):
         run_backtest(config=cfg, df=df, grouping_df=grouping_df)
+
+
+# ---- weights_df validation ----
+
+
+def _global_scope_config() -> dict:
+    """Config with a global-scope metric requiring weights_df."""
+    return {
+        "data": {"freq": "MS"},
+        "cross_validation": {
+            "mode": "explicit",
+            "horizon": 6,
+            "forecast_origins": ["2023-01-01", "2023-06-01"],
+        },
+        "model": {
+            "callable": "tsbricks._testing.dummy_models.forecast_only",
+        },
+        "metrics": {
+            "definitions": [
+                {
+                    "name": "wape_global",
+                    "callable": "tsbricks.blocks.metrics.rmse",
+                    "type": "simple",
+                    "scope": "global",
+                    "aggregation_callable": "my.agg.weighted_mean",
+                }
+            ],
+        },
+    }
+
+
+def test_run_backtest_accepts_weights_df_path(tmp_path) -> None:
+    """run_backtest() accepts a weights_df file path string."""
+    df = _synthetic_monthly_panel()
+    cfg = _minimal_config()
+    weights_path = tmp_path / "weights.parquet"
+    weights = pd.DataFrame(
+        {
+            "unique_id": ["A", "B"] * 2,
+            "forecast_origin": ["2023-01-01"] * 2 + ["2023-06-01"] * 2,
+            "raw_weight": [1.0, 2.0, 1.0, 2.0],
+        }
+    )
+    weights.to_parquet(weights_path)
+
+    results = run_backtest(config=cfg, df=df, weights_df=str(weights_path))
+
+    assert isinstance(results, BacktestResults)
+
+
+def test_run_backtest_missing_weights_df_with_aggregation_callable_raises() -> None:
+    """Global metric with aggregation_callable but no weights_df raises."""
+    df = _synthetic_monthly_panel()
+    cfg = _global_scope_config()
+
+    with pytest.raises(ValueError, match="weights_df is required"):
+        run_backtest(config=cfg, df=df)
+
+
+def test_run_backtest_weights_df_missing_columns_raises() -> None:
+    """weights_df missing required columns raises ValueError."""
+    df = _synthetic_monthly_panel()
+    cfg = _minimal_config()
+    # Missing 'raw_weight' column
+    weights_df = pd.DataFrame(
+        {
+            "unique_id": ["A", "B"],
+            "forecast_origin": ["2023-01-01", "2023-01-01"],
+        }
+    )
+
+    with pytest.raises(ValueError, match="missing required columns"):
+        run_backtest(config=cfg, df=df, weights_df=weights_df)
+
+
+def test_run_backtest_weights_df_missing_origin_coverage_raises() -> None:
+    """weights_df not covering all forecast origins raises ValueError."""
+    df = _synthetic_monthly_panel()
+    cfg = _minimal_config()
+    # Only covers first origin, missing "2023-06-01"
+    weights_df = pd.DataFrame(
+        {
+            "unique_id": ["A", "B"],
+            "forecast_origin": ["2023-01-01", "2023-01-01"],
+            "raw_weight": [1.0, 2.0],
+        }
+    )
+
+    with pytest.raises(ValueError, match="missing rows for forecast origins"):
+        run_backtest(config=cfg, df=df, weights_df=weights_df)

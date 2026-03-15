@@ -59,6 +59,50 @@ def _validate_grouping_df(
         )
 
 
+def _validate_weights_df(
+    weights_df: pd.DataFrame | None,
+    backtest_config: BacktestConfig,
+) -> None:
+    """Validate weights_df against the backtest config.
+
+    Raises:
+        ValueError: If a metric with ``aggregation_callable`` exists but
+            weights_df is missing, or if weights_df is missing required
+            columns or forecast origin coverage.
+    """
+    has_aggregation_callable = any(
+        defn.aggregation_callable is not None
+        for defn in backtest_config.metrics.definitions
+    )
+
+    if has_aggregation_callable and weights_df is None:
+        raise ValueError(
+            "weights_df is required when any metric has an aggregation_callable, "
+            "but none was provided (and metrics.weights_source is not set)."
+        )
+
+    if weights_df is None:
+        return
+
+    required_cols = {"unique_id", "forecast_origin", "raw_weight"}
+    missing = required_cols - set(weights_df.columns)
+    if missing:
+        raise ValueError(f"weights_df is missing required columns: {sorted(missing)}.")
+
+    # Check forecast origin coverage
+    expected_origins = set(backtest_config.cross_validation.forecast_origins)
+    if backtest_config.test is not None:
+        expected_origins.add(backtest_config.test.test_origin)
+
+    covered_origins = set(weights_df["forecast_origin"].unique())
+    missing_origins = expected_origins - covered_origins
+    if missing_origins:
+        raise ValueError(
+            f"weights_df is missing rows for forecast origins: "
+            f"{sorted(str(o) for o in missing_origins)}."
+        )
+
+
 def run_backtest(
     config_path: str | None = None,
     config: dict | None = None,
@@ -115,6 +159,14 @@ def run_backtest(
         grouping_df = pd.read_parquet(backtest_config.metrics.grouping_source)
 
     _validate_grouping_df(grouping_df, backtest_config)
+
+    # ---- resolve weights_df ----
+    if isinstance(weights_df, str):
+        weights_df = pd.read_parquet(weights_df)
+    elif weights_df is None and backtest_config.metrics.weights_source is not None:
+        weights_df = pd.read_parquet(backtest_config.metrics.weights_source)
+
+    _validate_weights_df(weights_df, backtest_config)
 
     cv_folds, test_split = generate_folds(
         df,
