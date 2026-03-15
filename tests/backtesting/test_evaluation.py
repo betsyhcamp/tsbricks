@@ -240,3 +240,159 @@ def test_evaluate_metrics_accepts_grouping_and_weights(single_series_data):
     )
 
     pd.testing.assert_frame_equal(result_with, result_without)
+
+
+# ---- group scope ----
+
+
+def _four_series_data():
+    """Four series (A, B, C, D) with known values for group scope tests.
+
+    Series A: y_true=[2,4], y_pred=[1,3]  (errors=[1,1])
+    Series B: y_true=[10,20], y_pred=[10,20]  (errors=[0,0])
+    Series C: y_true=[5,5], y_pred=[3,3]  (errors=[2,2])
+    Series D: y_true=[100,200], y_pred=[100,200]  (errors=[0,0])
+
+    Groups: cat1={A,B}, cat2={C,D}
+    cat1 concatenated: y_true=[2,4,10,20], y_pred=[1,3,10,20] -> RMSE=sqrt((1+1+0+0)/4)=sqrt(0.5)
+    cat2 concatenated: y_true=[5,5,100,200], y_pred=[3,3,100,200] -> RMSE=sqrt((4+4+0+0)/4)=sqrt(2)
+    """
+    y_true = pd.DataFrame(
+        {
+            "unique_id": ["A", "A", "B", "B", "C", "C", "D", "D"],
+            "ds": [1, 2, 1, 2, 1, 2, 1, 2],
+            "y": [2.0, 4.0, 10.0, 20.0, 5.0, 5.0, 100.0, 200.0],
+        }
+    )
+    y_pred = pd.DataFrame(
+        {
+            "unique_id": ["A", "A", "B", "B", "C", "C", "D", "D"],
+            "ds": [1, 2, 1, 2, 1, 2, 1, 2],
+            "ypred": [1.0, 3.0, 10.0, 20.0, 3.0, 3.0, 100.0, 200.0],
+        }
+    )
+    y_train = pd.DataFrame(
+        {
+            "unique_id": ["A"] * 4 + ["B"] * 4 + ["C"] * 4 + ["D"] * 4,
+            "ds": list(range(1, 5)) * 4,
+            "y": [0.0, 1.0, 2.0, 3.0] * 4,
+        }
+    )
+    grouping_df = pd.DataFrame(
+        {
+            "unique_id": ["A", "B", "C", "D"],
+            "category": ["cat1", "cat1", "cat2", "cat2"],
+        }
+    )
+    return y_true, y_pred, y_train, grouping_df
+
+
+def _group_metrics_config(
+    grouping_columns: list[str] | None = None,
+    top_level_grouping_columns: list[str] | None = None,
+    metric_type: str = "simple",
+) -> MetricsConfig:
+    """Build a MetricsConfig with a single group-scope metric."""
+    metric_name = "rmse" if metric_type == "simple" else "rmsse"
+    metric_callable = (
+        "tsbricks.blocks.metrics.rmse"
+        if metric_type == "simple"
+        else "tsbricks.blocks.metrics.rmsse"
+    )
+    return MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name=metric_name,
+                callable=metric_callable,
+                type=metric_type,
+                scope="group",
+                grouping_columns=grouping_columns,
+            )
+        ],
+        grouping_columns=top_level_grouping_columns,
+    )
+
+
+def test_group_scope_simple_metric():
+    """Group scope: RMSE computed on concatenated arrays within each group."""
+    y_true, y_pred, y_train, grouping_df = _four_series_data()
+    config = _group_metrics_config(grouping_columns=["category"])
+
+    result = evaluate_metrics(
+        y_true, y_pred, y_train, config, "fold_0", grouping_df=grouping_df
+    )
+
+    assert len(result) == 2
+    assert set(result["unique_id"]) == {"cat1", "cat2"}
+    assert (result["scope"] == "group").all()
+    assert (result["grouping_column_name"] == "category").all()
+
+    cat1_val = result.loc[result["unique_id"] == "cat1", "value"].iloc[0]
+    cat2_val = result.loc[result["unique_id"] == "cat2", "value"].iloc[0]
+    assert cat1_val == pytest.approx(np.sqrt(0.5))
+    assert cat2_val == pytest.approx(np.sqrt(2.0))
+
+
+def test_group_scope_context_aware_metric():
+    """Group scope with context-aware metric: y_train filtered to group."""
+    y_true, y_pred, y_train, grouping_df = _four_series_data()
+    config = _group_metrics_config(
+        grouping_columns=["category"], metric_type="context_aware"
+    )
+
+    result = evaluate_metrics(
+        y_true, y_pred, y_train, config, "fold_0", grouping_df=grouping_df
+    )
+
+    assert len(result) == 2
+    assert set(result["unique_id"]) == {"cat1", "cat2"}
+    assert (result["scope"] == "group").all()
+    # RMSSE values should be finite (y_train has unit diffs → scale=1)
+    assert np.isfinite(result["value"]).all()
+
+
+def test_group_scope_falls_back_to_top_level_grouping_columns():
+    """Group scope uses MetricsConfig.grouping_columns when definition has none."""
+    y_true, y_pred, y_train, grouping_df = _four_series_data()
+    config = _group_metrics_config(top_level_grouping_columns=["category"])
+
+    result = evaluate_metrics(
+        y_true, y_pred, y_train, config, "fold_0", grouping_df=grouping_df
+    )
+
+    assert len(result) == 2
+    assert (result["grouping_column_name"] == "category").all()
+
+
+def test_mixed_per_series_and_group_scope():
+    """Mixed scopes: per_series and group metrics in one call."""
+    y_true, y_pred, y_train, grouping_df = _four_series_data()
+    config = MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="rmse_series",
+                callable="tsbricks.blocks.metrics.rmse",
+                type="simple",
+            ),
+            MetricDefinitionConfig(
+                name="rmse_group",
+                callable="tsbricks.blocks.metrics.rmse",
+                type="simple",
+                scope="group",
+                grouping_columns=["category"],
+            ),
+        ],
+    )
+
+    result = evaluate_metrics(
+        y_true, y_pred, y_train, config, "fold_0", grouping_df=grouping_df
+    )
+
+    per_series_rows = result[result["scope"] == "per_series"]
+    group_rows = result[result["scope"] == "group"]
+
+    # 4 series for per_series metric, 2 groups for group metric
+    assert len(per_series_rows) == 4
+    assert len(group_rows) == 2
+    assert set(per_series_rows["unique_id"]) == {"A", "B", "C", "D"}
+    assert set(group_rows["unique_id"]) == {"cat1", "cat2"}
