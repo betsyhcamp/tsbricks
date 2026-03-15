@@ -243,3 +243,36 @@ def test_backtest_integer_ds_with_test_fold() -> None:
 
     # CV still works
     assert len(results.cv.forecasts_per_fold) == 2
+
+
+# ---- run_backtest accepts grouping_df and weights_df ----
+
+
+def test_run_backtest_accepts_grouping_df() -> None:
+    """run_backtest() accepts a grouping_df DataFrame without error."""
+    df = _synthetic_monthly_panel()
+    cfg = _minimal_config()
+    grouping_df = pd.DataFrame({"unique_id": ["A", "B"], "category": ["cat1", "cat2"]})
+
+    results = run_backtest(config=cfg, df=df, grouping_df=grouping_df)
+
+    assert isinstance(results, BacktestResults)
+    assert len(results.cv.forecasts_per_fold) == 2
+
+
+def test_run_backtest_accepts_weights_df() -> None:
+    """run_backtest() accepts a weights_df DataFrame without error."""
+    df = _synthetic_monthly_panel()
+    cfg = _minimal_config()
+    weights_df = pd.DataFrame(
+        {
+            "unique_id": ["A", "B"] * 2,
+            "forecast_origin": ["2023-01-01"] * 2 + ["2023-06-01"] * 2,
+            "raw_weight": [1.0, 2.0, 1.0, 2.0],
+        }
+    )
+
+    results = run_backtest(config=cfg, df=df, weights_df=weights_df)
+
+    assert isinstance(results, BacktestResults)
+    assert len(results.cv.forecasts_per_fold) == 2

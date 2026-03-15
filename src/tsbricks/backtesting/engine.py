@@ -21,6 +21,8 @@ def run_backtest(
     config_path: str | None = None,
     config: dict | None = None,
     df: pd.DataFrame | None = None,
+    grouping_df: pd.DataFrame | str | None = None,
+    weights_df: pd.DataFrame | str | None = None,
 ) -> BacktestResults:
     """Run a full cross-validated backtest.
 
@@ -34,6 +36,11 @@ def run_backtest(
         config: Configuration dict to parse directly.
         df: Input panel DataFrame with at least the columns specified in
             ``DataConfig`` (defaults: ``ds``, ``unique_id``, ``y``).
+        grouping_df: Series-to-group mapping DataFrame or path to a
+            parquet file.  Required when any metric has ``scope="group"``.
+        weights_df: Per-series, per-origin weights DataFrame or path to
+            a parquet file.  Required when any metric has an
+            ``aggregation_callable``.
 
     Returns:
         A :class:`BacktestResults` containing CV metrics, forecasts,
