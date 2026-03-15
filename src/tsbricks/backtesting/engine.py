@@ -62,8 +62,16 @@ def _validate_grouping_df(
 def _validate_weights_df(
     weights_df: pd.DataFrame | None,
     backtest_config: BacktestConfig,
+    fold_origins: list[pd.Timestamp | int],
 ) -> None:
     """Validate weights_df against the backtest config.
+
+    Args:
+        weights_df: Per-series, per-origin weights DataFrame.
+        backtest_config: Parsed backtest configuration.
+        fold_origins: Typed fold origins (``pd.Timestamp`` or ``int``),
+            used for origin coverage checks so that types match
+            ``weights_df["forecast_origin"]``.
 
     Raises:
         ValueError: If a metric with ``aggregation_callable`` exists but
@@ -89,10 +97,13 @@ def _validate_weights_df(
     if missing:
         raise ValueError(f"weights_df is missing required columns: {sorted(missing)}.")
 
-    # Check forecast origin coverage
-    expected_origins = set(backtest_config.cross_validation.forecast_origins)
+    # Check forecast origin coverage using typed origins
+    expected_origins: set[pd.Timestamp | int] = set(fold_origins)
     if backtest_config.test is not None:
-        expected_origins.add(backtest_config.test.test_origin)
+        if backtest_config.data.freq == 1:
+            expected_origins.add(int(backtest_config.test.test_origin))
+        else:
+            expected_origins.add(pd.Timestamp(backtest_config.test.test_origin))
 
     covered_origins = set(weights_df["forecast_origin"].unique())
     missing_origins = expected_origins - covered_origins
@@ -166,8 +177,6 @@ def run_backtest(
     elif weights_df is None and backtest_config.metrics.weights_source is not None:
         weights_df = pd.read_parquet(backtest_config.metrics.weights_source)
 
-    _validate_weights_df(weights_df, backtest_config)
-
     cv_folds, test_split = generate_folds(
         df,
         backtest_config.cross_validation,
@@ -184,6 +193,8 @@ def run_backtest(
             pd.Timestamp(origin)
             for origin in backtest_config.cross_validation.forecast_origins
         )
+
+    _validate_weights_df(weights_df, backtest_config, fold_origins)
 
     forecasts_per_fold: dict[str, pd.DataFrame] = {}
     all_metrics: list[pd.DataFrame] = []
