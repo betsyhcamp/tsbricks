@@ -634,11 +634,11 @@ def test_param_resolver_config_minimal() -> None:
     assert prc.grouping_columns is None
 
 
-# ---- MetricDefinitionConfig new fields ----
+# ---- MetricDefinitionConfig fields ----
 
 
-def test_metric_definition_with_new_fields() -> None:
-    """MetricDefinitionConfig accepts all new fields."""
+def test_metric_definition_all_fields() -> None:
+    """MetricDefinitionConfig accepts all fields."""
     defn = MetricDefinitionConfig(
         name="wape_global",
         callable="my.metrics.wape",
@@ -659,8 +659,8 @@ def test_metric_definition_with_new_fields() -> None:
     assert defn.aggregation_params == {"normalize": True}
 
 
-def test_metric_definition_backward_compatible() -> None:
-    """MetricDefinitionConfig without new fields uses defaults."""
+def test_metric_definition_defaults() -> None:
+    """MetricDefinitionConfig applies correct defaults for optional fields."""
     defn = MetricDefinitionConfig(
         name="rmse",
         callable="tsbricks.blocks.metrics.rmse",
@@ -833,7 +833,7 @@ def test_scope_group_with_top_level_grouping_columns_ok() -> None:
     assert cfg.grouping_columns == ["category"]
 
 
-# ---- MetricsConfig new fields ----
+# ---- MetricsConfig fields ----
 
 
 def test_metrics_config_grouping_and_weights_source() -> None:
@@ -854,11 +854,11 @@ def test_metrics_config_grouping_and_weights_source() -> None:
     assert cfg.weights_source == "/path/to/weights.parquet"
 
 
-# ---- Full config backward compatibility ----
+# ---- Full config defaults ----
 
 
-def test_full_config_backward_compatible(valid_cfg: dict) -> None:
-    """Existing config with no new fields still parses."""
+def test_full_config_defaults(valid_cfg: dict) -> None:
+    """Parsed config applies correct defaults for all optional metric fields."""
     cfg = parse_config(config=valid_cfg)
 
     assert isinstance(cfg, BacktestConfig)
@@ -872,3 +872,119 @@ def test_full_config_backward_compatible(valid_cfg: dict) -> None:
     assert defn.aggregation_params is None
     assert cfg.metrics.grouping_source is None
     assert cfg.metrics.weights_source is None
+
+
+# ---- Empty grouping_columns rejected ----
+
+
+def test_empty_defn_grouping_columns_raises() -> None:
+    """Empty grouping_columns on metric definition raises."""
+    with pytest.raises(ValidationError):
+        MetricDefinitionConfig(
+            name="wape",
+            callable="m.wape",
+            type="simple",
+            scope="group",
+            grouping_columns=[],
+        )
+
+
+def test_empty_top_level_grouping_columns_raises() -> None:
+    """Empty grouping_columns on MetricsConfig raises."""
+    with pytest.raises(ValidationError):
+        MetricsConfig(
+            definitions=[
+                MetricDefinitionConfig(
+                    name="rmse",
+                    callable="m.rmse",
+                    type="simple",
+                )
+            ],
+            grouping_columns=[],
+        )
+
+
+# ---- End-to-end parse_config with metric fields ----
+
+
+def _cfg_with_all_metric_fields(valid_cfg: dict) -> dict:
+    """Inject all metric fields into valid_cfg for parse_config tests."""
+    valid_cfg["metrics"] = {
+        "definitions": [
+            {
+                "name": "rmse",
+                "callable": "tsbricks.blocks.metrics.rmse",
+                "type": "simple",
+            },
+            {
+                "name": "wape_global",
+                "callable": "my.metrics.wape",
+                "type": "simple",
+                "scope": "global",
+                "aggregation": "pooled",
+                "grouping_columns": ["category"],
+                "per_series_params": {
+                    "m": {"A": 12, "B": 6},
+                },
+                "param_resolvers": {
+                    "scale": {
+                        "callable": "my.resolvers.scale",
+                        "params": {"season_length": 12},
+                    },
+                },
+                "aggregation_callable": "my.agg.weighted_mean",
+                "aggregation_params": {"normalize": True},
+            },
+        ],
+        "grouping_columns": ["region"],
+        "grouping_source": "/data/grouping.parquet",
+        "weights_source": "/data/weights.parquet",
+    }
+    return valid_cfg
+
+
+def test_parse_config_definition_defaults(
+    valid_cfg: dict,
+) -> None:
+    """Definition with only required fields preserves defaults after parsing."""
+    cfg = parse_config(config=_cfg_with_all_metric_fields(valid_cfg))
+
+    d0 = cfg.metrics.definitions[0]
+    assert d0.scope == "per_series"
+    assert d0.aggregation == "per_fold_mean"
+    assert d0.grouping_columns is None
+    assert d0.per_series_params is None
+    assert d0.param_resolvers is None
+    assert d0.aggregation_callable is None
+    assert d0.aggregation_params is None
+
+
+def test_parse_config_definition_all_fields(
+    valid_cfg: dict,
+) -> None:
+    """All metric definition fields parse correctly from raw dict."""
+    cfg = parse_config(config=_cfg_with_all_metric_fields(valid_cfg))
+
+    d1 = cfg.metrics.definitions[1]
+    assert d1.scope == "global"
+    assert d1.aggregation == "pooled"
+    assert d1.grouping_columns == ["category"]
+    assert d1.per_series_params == {"m": {"A": 12, "B": 6}}
+    assert "scale" in d1.param_resolvers
+    assert d1.param_resolvers["scale"].callable == "my.resolvers.scale"
+    assert d1.param_resolvers["scale"].params == {
+        "season_length": 12,
+    }
+    assert d1.aggregation_callable == "my.agg.weighted_mean"
+    assert d1.aggregation_params == {"normalize": True}
+
+
+def test_parse_config_top_level_metrics_fields(
+    valid_cfg: dict,
+) -> None:
+    """Top-level MetricsConfig fields parse correctly from raw dict."""
+    cfg = parse_config(config=_cfg_with_all_metric_fields(valid_cfg))
+
+    assert cfg.metrics.grouping_columns == ["region"]
+    assert cfg.metrics.grouping_source == "/data/grouping.parquet"
+    assert cfg.metrics.weights_source == "/data/weights.parquet"

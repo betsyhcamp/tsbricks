@@ -147,7 +147,7 @@ class MetricDefinitionConfig(BaseModel):
     scope: Literal["per_series", "group", "global"] = "per_series"
     aggregation: Literal["per_fold_mean", "pooled"] = "per_fold_mean"
     params: dict[str, Any] | None = None
-    grouping_columns: list[str] | None = None
+    grouping_columns: list[str] | None = Field(None, min_length=1)
     per_series_params: dict[str, dict[str, Any]] | None = None
     param_resolvers: dict[str, ParamResolverConfig] | None = None
     aggregation_callable: str | None = None
@@ -183,7 +183,7 @@ class MetricsConfig(BaseModel):
     """Metrics section: definitions and optional grouping."""
 
     definitions: list[MetricDefinitionConfig]
-    grouping_columns: list[str] | None = None
+    grouping_columns: list[str] | None = Field(None, min_length=1)
     grouping_source: str | None = None
     weights_source: str | None = None
 
