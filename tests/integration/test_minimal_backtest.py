@@ -246,6 +246,22 @@ def test_backtest_integer_ds_with_test_fold() -> None:
     assert len(results.cv.forecasts_per_fold) == 2
 
 
+def _monthly_weights_df() -> pd.DataFrame:
+    """Weights DataFrame for the two-series monthly panel with 2 origins."""
+    return pd.DataFrame(
+        {
+            "unique_id": ["A", "B"] * 2,
+            "forecast_origin": [
+                pd.Timestamp("2023-01-01"),
+                pd.Timestamp("2023-01-01"),
+                pd.Timestamp("2023-06-01"),
+                pd.Timestamp("2023-06-01"),
+            ],
+            "raw_weight": [1.0, 2.0, 1.0, 2.0],
+        }
+    )
+
+
 # ---- run_backtest accepts grouping_df and weights_df ----
 
 
@@ -265,15 +281,8 @@ def test_run_backtest_accepts_weights_df() -> None:
     """run_backtest() accepts a weights_df DataFrame without error."""
     df = _synthetic_monthly_panel()
     cfg = _minimal_config()
-    weights_df = pd.DataFrame(
-        {
-            "unique_id": ["A", "B"] * 2,
-            "forecast_origin": ["2023-01-01"] * 2 + ["2023-06-01"] * 2,
-            "raw_weight": [1.0, 2.0, 1.0, 2.0],
-        }
-    )
 
-    results = run_backtest(config=cfg, df=df, weights_df=weights_df)
+    results = run_backtest(config=cfg, df=df, weights_df=_monthly_weights_df())
 
     assert isinstance(results, BacktestResults)
     assert len(results.cv.forecasts_per_fold) == 2
@@ -385,14 +394,7 @@ def test_run_backtest_accepts_weights_df_path(tmp_path) -> None:
     df = _synthetic_monthly_panel()
     cfg = _minimal_config()
     weights_path = tmp_path / "weights.parquet"
-    weights = pd.DataFrame(
-        {
-            "unique_id": ["A", "B"] * 2,
-            "forecast_origin": ["2023-01-01"] * 2 + ["2023-06-01"] * 2,
-            "raw_weight": [1.0, 2.0, 1.0, 2.0],
-        }
-    )
-    weights.to_parquet(weights_path)
+    _monthly_weights_df().to_parquet(weights_path)
 
     results = run_backtest(config=cfg, df=df, weights_df=str(weights_path))
 
@@ -428,14 +430,67 @@ def test_run_backtest_weights_df_missing_origin_coverage_raises() -> None:
     """weights_df not covering all forecast origins raises ValueError."""
     df = _synthetic_monthly_panel()
     cfg = _minimal_config()
-    # Only covers first origin, missing "2023-06-01"
-    weights_df = pd.DataFrame(
-        {
-            "unique_id": ["A", "B"],
-            "forecast_origin": ["2023-01-01", "2023-01-01"],
-            "raw_weight": [1.0, 2.0],
-        }
-    )
+    # Only covers first origin, missing 2023-06-01
+    all_weights = _monthly_weights_df()
+    weights_df = all_weights[
+        all_weights["forecast_origin"] == pd.Timestamp("2023-01-01")
+    ].copy()
 
     with pytest.raises(ValueError, match="missing rows for forecast origins"):
         run_backtest(config=cfg, df=df, weights_df=weights_df)
+
+
+# ---- config-driven source loading and fallback ----
+
+
+def test_run_backtest_loads_grouping_df_from_config_source(tmp_path) -> None:
+    """grouping_df loaded from metrics.grouping_source when not passed directly."""
+    df = _synthetic_monthly_panel()
+    cfg = _minimal_config()
+    grouping_path = tmp_path / "grouping.parquet"
+    pd.DataFrame({"unique_id": ["A", "B"], "category": ["cat1", "cat2"]}).to_parquet(
+        grouping_path
+    )
+    cfg["metrics"]["grouping_source"] = str(grouping_path)
+
+    results = run_backtest(config=cfg, df=df)
+
+    assert isinstance(results, BacktestResults)
+    assert len(results.cv.forecasts_per_fold) == 2
+
+
+def test_run_backtest_loads_weights_df_from_config_source(tmp_path) -> None:
+    """weights_df loaded from metrics.weights_source when not passed directly."""
+    df = _synthetic_monthly_panel()
+    cfg = _minimal_config()
+    weights_path = tmp_path / "weights.parquet"
+    _monthly_weights_df().to_parquet(weights_path)
+    cfg["metrics"]["weights_source"] = str(weights_path)
+
+    results = run_backtest(config=cfg, df=df)
+
+    assert isinstance(results, BacktestResults)
+    assert len(results.cv.forecasts_per_fold) == 2
+
+
+def test_run_backtest_grouping_columns_fallback_to_top_level() -> None:
+    """Metric with no grouping_columns uses top-level metrics.grouping_columns."""
+    df = _synthetic_monthly_panel()
+    cfg = _minimal_config()
+    # Group-scope metric with NO definition-level grouping_columns;
+    # top-level metrics.grouping_columns provides the fallback.
+    cfg["metrics"]["definitions"].append(
+        {
+            "name": "rmse_group",
+            "callable": "tsbricks.blocks.metrics.rmse",
+            "type": "simple",
+            "scope": "group",
+        }
+    )
+    cfg["metrics"]["grouping_columns"] = ["category"]
+    grouping_df = pd.DataFrame({"unique_id": ["A", "B"], "category": ["cat1", "cat2"]})
+
+    # Validation should pass — grouping_df has the fallback column "category"
+    results = run_backtest(config=cfg, df=df, grouping_df=grouping_df)
+
+    assert isinstance(results, BacktestResults)
