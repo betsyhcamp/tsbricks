@@ -58,6 +58,8 @@ def test_minimal_backtest_end_to_end() -> None:
         "metric_name",
         "unique_id",
         "fold",
+        "scope",
+        "grouping_column_name",
         "aggregation",
         "value",
     ]
@@ -130,6 +132,8 @@ def test_backtest_with_test_fold() -> None:
         "metric_name",
         "unique_id",
         "fold",
+        "scope",
+        "grouping_column_name",
         "aggregation",
         "value",
     ]
@@ -198,6 +202,8 @@ def test_minimal_backtest_integer_ds() -> None:
         "metric_name",
         "unique_id",
         "fold",
+        "scope",
+        "grouping_column_name",
         "aggregation",
         "value",
     ]

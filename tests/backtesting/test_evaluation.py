@@ -70,7 +70,7 @@ def two_series_data(y_true_simple, y_pred_simple, y_train_unit_diffs):
 
 
 def test_output_has_expected_columns(single_series_data):
-    """Output DataFrame has exactly the 5 spec columns."""
+    """Output DataFrame has exactly the 7 spec columns."""
     y_true, y_pred, y_train = single_series_data
     result = evaluate_metrics(
         y_true, y_pred, y_train, _metrics_config([RMSE_DEF]), "fold_0"
@@ -80,6 +80,8 @@ def test_output_has_expected_columns(single_series_data):
         "metric_name",
         "unique_id",
         "fold",
+        "scope",
+        "grouping_column_name",
         "aggregation",
         "value",
     ]
@@ -95,14 +97,34 @@ def test_fold_id_appears_in_output(single_series_data):
     assert (result["fold"] == "fold_3").all()
 
 
-def test_aggregation_is_per_series(single_series_data):
-    """All rows have aggregation='per_series' in V1."""
+def test_aggregation_is_per_fold_mean(single_series_data):
+    """All rows have aggregation='per_fold_mean' by default."""
     y_true, y_pred, y_train = single_series_data
     result = evaluate_metrics(
         y_true, y_pred, y_train, _metrics_config([RMSE_DEF]), "fold_0"
     )
 
-    assert (result["aggregation"] == "per_series").all()
+    assert (result["aggregation"] == "per_fold_mean").all()
+
+
+def test_scope_is_per_series(single_series_data):
+    """All rows have scope='per_series' for per-series metrics."""
+    y_true, y_pred, y_train = single_series_data
+    result = evaluate_metrics(
+        y_true, y_pred, y_train, _metrics_config([RMSE_DEF]), "fold_0"
+    )
+
+    assert (result["scope"] == "per_series").all()
+
+
+def test_grouping_column_name_is_none(single_series_data):
+    """All rows have grouping_column_name=None for per-series."""
+    y_true, y_pred, y_train = single_series_data
+    result = evaluate_metrics(
+        y_true, y_pred, y_train, _metrics_config([RMSE_DEF]), "fold_0"
+    )
+
+    assert result["grouping_column_name"].isna().all()
 
 
 # ---- simple metric values ----
