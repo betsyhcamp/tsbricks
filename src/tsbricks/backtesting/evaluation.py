@@ -55,11 +55,22 @@ def evaluate_metrics(
                     "metric_name": defn.name,
                     "unique_id": uid,
                     "fold": fold_id,
-                    "aggregation": "per_series",
+                    "scope": "per_series",
+                    "grouping_column_name": None,
+                    "aggregation": defn.aggregation,
                     "value": value,
                 }
             )
 
     return pd.DataFrame(
-        rows, columns=["metric_name", "unique_id", "fold", "aggregation", "value"]
+        rows,
+        columns=[
+            "metric_name",
+            "unique_id",
+            "fold",
+            "scope",
+            "grouping_column_name",
+            "aggregation",
+            "value",
+        ],
     )
