@@ -175,10 +175,20 @@ def run_backtest(
         test_config=backtest_config.test,
     )
 
+    if backtest_config.data.freq == 1:
+        fold_origins = sorted(
+            int(origin) for origin in backtest_config.cross_validation.forecast_origins
+        )
+    else:
+        fold_origins = sorted(
+            pd.Timestamp(origin)
+            for origin in backtest_config.cross_validation.forecast_origins
+        )
+
     forecasts_per_fold: dict[str, pd.DataFrame] = {}
     all_metrics: list[pd.DataFrame] = []
 
-    for fold_id, splits in cv_folds.items():
+    for fold_idx, (fold_id, splits) in enumerate(cv_folds.items()):
         train_df = splits["train"]
         val_df = splits["val"]
 
@@ -196,6 +206,12 @@ def run_backtest(
 
         forecast_original = inverse_transforms(forecast_df, fitted_transforms)
 
+        fold_weights: dict[str, float] | None = None
+        if weights_df is not None:
+            fold_origin = fold_origins[fold_idx]
+            fold_rows = weights_df[weights_df["forecast_origin"] == fold_origin]
+            fold_weights = dict(zip(fold_rows["unique_id"], fold_rows["raw_weight"]))
+
         fold_metrics = evaluate_metrics(
             y_true=val_df,
             y_pred=forecast_original,
@@ -203,22 +219,13 @@ def run_backtest(
             metrics_config=backtest_config.metrics,
             fold_id=fold_id,
             grouping_df=grouping_df,
+            fold_weights=fold_weights,
         )
 
         forecasts_per_fold[fold_id] = forecast_original
         all_metrics.append(fold_metrics)
 
     metrics = pd.concat(all_metrics, ignore_index=True)
-
-    if backtest_config.data.freq == 1:
-        fold_origins = sorted(
-            int(origin) for origin in backtest_config.cross_validation.forecast_origins
-        )
-    else:
-        fold_origins = sorted(
-            pd.Timestamp(origin)
-            for origin in backtest_config.cross_validation.forecast_origins
-        )
 
     cv_results = CVResults(
         forecasts_per_fold=forecasts_per_fold,
@@ -246,15 +253,6 @@ def run_backtest(
 
         forecast_original = inverse_transforms(forecast_df, fitted_transforms)
 
-        test_metrics = evaluate_metrics(
-            y_true=test_test_df,
-            y_pred=forecast_original,
-            y_train=test_train_df,
-            metrics_config=backtest_config.metrics,
-            fold_id="test",
-            grouping_df=grouping_df,
-        )
-
         if backtest_config.data.freq == 1:
             test_origin_typed: pd.Timestamp | int = int(
                 backtest_config.test.test_origin  # type: ignore[union-attr]
@@ -263,6 +261,23 @@ def run_backtest(
             test_origin_typed = pd.Timestamp(
                 backtest_config.test.test_origin  # type: ignore[union-attr]
             )
+
+        test_fold_weights: dict[str, float] | None = None
+        if weights_df is not None:
+            test_rows = weights_df[weights_df["forecast_origin"] == test_origin_typed]
+            test_fold_weights = dict(
+                zip(test_rows["unique_id"], test_rows["raw_weight"])
+            )
+
+        test_metrics = evaluate_metrics(
+            y_true=test_test_df,
+            y_pred=forecast_original,
+            y_train=test_train_df,
+            metrics_config=backtest_config.metrics,
+            fold_id="test",
+            grouping_df=grouping_df,
+            fold_weights=test_fold_weights,
+        )
 
         test_results = TestResults(
             forecasts=forecast_original,
