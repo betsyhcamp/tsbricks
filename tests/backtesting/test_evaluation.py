@@ -216,3 +216,27 @@ def test_multiple_metrics_produces_row_per_series_per_metric(single_series_data)
 
     assert len(result) == 2
     assert set(result["metric_name"]) == {"rmse", "rmsse"}
+
+
+# ---- new params accepted ----
+
+
+def test_evaluate_metrics_accepts_grouping_and_weights(single_series_data):
+    """grouping_df and fold_weights are accepted without changing output."""
+    y_true, y_pred, y_train = single_series_data
+    grouping_df = pd.DataFrame({"unique_id": ["A"], "category": ["cat1"]})
+
+    result_without = evaluate_metrics(
+        y_true, y_pred, y_train, _metrics_config([RMSE_DEF]), "fold_0"
+    )
+    result_with = evaluate_metrics(
+        y_true,
+        y_pred,
+        y_train,
+        _metrics_config([RMSE_DEF]),
+        "fold_0",
+        grouping_df=grouping_df,
+        fold_weights={"A": 1.0},
+    )
+
+    pd.testing.assert_frame_equal(result_with, result_without)

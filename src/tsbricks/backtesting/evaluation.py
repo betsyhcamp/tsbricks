@@ -14,6 +14,8 @@ def evaluate_metrics(
     y_train: pd.DataFrame,
     metrics_config: MetricsConfig,
     fold_id: str,
+    grouping_df: pd.DataFrame | None = None,
+    fold_weights: dict[str, float] | None = None,
 ) -> pd.DataFrame:
     """Compute all configured metrics for one fold, per series.
 
@@ -23,6 +25,11 @@ def evaluate_metrics(
         y_train: Training data with columns ``ds``, ``unique_id``, ``y``.
         metrics_config: Metric definitions from the backtest config.
         fold_id: Fold identifier (e.g. ``"fold_0"``).
+        grouping_df: Series-to-group mapping (used by group scope in
+            later phases).  Currently accepted but unused.
+        fold_weights: Per-series weights for this fold (used by global
+            scope aggregation in later phases).  Currently accepted but
+            unused.
 
     Returns:
         Long-format DataFrame with columns
