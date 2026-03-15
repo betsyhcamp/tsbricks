@@ -26,7 +26,8 @@ def evaluate_metrics(
 
     Returns:
         Long-format DataFrame with columns
-        ``[metric_name, unique_id, fold, aggregation, value]``.
+        ``[metric_name, unique_id, fold, scope, grouping_column_name,
+        aggregation, value]``.
     """
     resolved = [
         (defn, dynamic_import(defn.callable), defn.params or {})
