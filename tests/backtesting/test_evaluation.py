@@ -107,6 +107,17 @@ def test_aggregation_is_per_fold_mean(single_series_data):
     assert (result["aggregation"] == "per_fold_mean").all()
 
 
+def test_aggregation_pooled_propagates(single_series_data):
+    """aggregation='pooled' on definition flows through to output rows."""
+    y_true, y_pred, y_train = single_series_data
+    pooled_def = {**RMSE_DEF, "aggregation": "pooled"}
+    result = evaluate_metrics(
+        y_true, y_pred, y_train, _metrics_config([pooled_def]), "fold_0"
+    )
+
+    assert (result["aggregation"] == "pooled").all()
+
+
 def test_scope_is_per_series(single_series_data):
     """All rows have scope='per_series' for per-series metrics."""
     y_true, y_pred, y_train = single_series_data
