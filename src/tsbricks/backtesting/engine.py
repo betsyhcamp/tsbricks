@@ -8,13 +8,55 @@ from tsbricks.blocks.metadata import get_git_hash, get_uv_lock_info
 from tsbricks.backtesting.cross_validation import generate_folds
 from tsbricks.backtesting.evaluation import evaluate_metrics
 from tsbricks.backtesting.results import BacktestResults, CVResults, TestResults
-from tsbricks.backtesting.schema import parse_config
+from tsbricks.backtesting.schema import BacktestConfig, parse_config
 from tsbricks.runner import (
     apply_transforms,
     fit_transforms,
     inverse_transforms,
     invoke_model,
 )
+
+
+def _validate_grouping_df(
+    grouping_df: pd.DataFrame | None,
+    backtest_config: BacktestConfig,
+) -> None:
+    """Validate grouping_df against the backtest config.
+
+    Raises:
+        ValueError: If a group-scope metric exists but grouping_df is
+            missing, or if grouping_df is missing required columns.
+    """
+    has_group_scope = any(
+        defn.scope == "group" for defn in backtest_config.metrics.definitions
+    )
+
+    if has_group_scope and grouping_df is None:
+        raise ValueError(
+            "grouping_df is required when any metric has scope='group', "
+            "but none was provided (and metrics.grouping_source is not set)."
+        )
+
+    if grouping_df is None:
+        return
+
+    if "unique_id" not in grouping_df.columns:
+        raise ValueError("grouping_df must contain a 'unique_id' column.")
+
+    # Collect all referenced grouping columns
+    required_cols: set[str] = set()
+    top_level_cols = backtest_config.metrics.grouping_columns
+    for defn in backtest_config.metrics.definitions:
+        if defn.grouping_columns is not None:
+            required_cols.update(defn.grouping_columns)
+        elif top_level_cols is not None:
+            required_cols.update(top_level_cols)
+
+    missing = required_cols - set(grouping_df.columns)
+    if missing:
+        raise ValueError(
+            f"grouping_df is missing required grouping columns: {sorted(missing)}."
+        )
 
 
 def run_backtest(
@@ -66,6 +108,14 @@ def run_backtest(
     }
     df = df.rename(columns=col_map)
 
+    # ---- resolve grouping_df ----
+    if isinstance(grouping_df, str):
+        grouping_df = pd.read_parquet(grouping_df)
+    elif grouping_df is None and backtest_config.metrics.grouping_source is not None:
+        grouping_df = pd.read_parquet(backtest_config.metrics.grouping_source)
+
+    _validate_grouping_df(grouping_df, backtest_config)
+
     cv_folds, test_split = generate_folds(
         df,
         backtest_config.cross_validation,
@@ -100,6 +150,7 @@ def run_backtest(
             y_train=train_df,
             metrics_config=backtest_config.metrics,
             fold_id=fold_id,
+            grouping_df=grouping_df,
         )
 
         forecasts_per_fold[fold_id] = forecast_original
@@ -149,6 +200,7 @@ def run_backtest(
             y_train=test_train_df,
             metrics_config=backtest_config.metrics,
             fold_id="test",
+            grouping_df=grouping_df,
         )
 
         if backtest_config.data.freq == 1:

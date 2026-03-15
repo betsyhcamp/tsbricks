@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from tsbricks.backtesting import BacktestResults, run_backtest
 
@@ -276,3 +277,75 @@ def test_run_backtest_accepts_weights_df() -> None:
 
     assert isinstance(results, BacktestResults)
     assert len(results.cv.forecasts_per_fold) == 2
+
+
+def test_run_backtest_accepts_grouping_df_path(tmp_path) -> None:
+    """run_backtest() accepts a grouping_df file path string."""
+    df = _synthetic_monthly_panel()
+    cfg = _minimal_config()
+    grouping_path = tmp_path / "grouping.parquet"
+    grouping = pd.DataFrame({"unique_id": ["A", "B"], "category": ["cat1", "cat2"]})
+    grouping.to_parquet(grouping_path)
+
+    results = run_backtest(config=cfg, df=df, grouping_df=str(grouping_path))
+
+    assert isinstance(results, BacktestResults)
+
+
+# ---- grouping_df validation ----
+
+
+def _group_scope_config() -> dict:
+    """Config with a group-scope metric requiring grouping_df."""
+    return {
+        "data": {"freq": "MS"},
+        "cross_validation": {
+            "mode": "explicit",
+            "horizon": 6,
+            "forecast_origins": ["2023-01-01", "2023-06-01"],
+        },
+        "model": {
+            "callable": "tsbricks._testing.dummy_models.forecast_only",
+        },
+        "metrics": {
+            "definitions": [
+                {
+                    "name": "rmse_group",
+                    "callable": "tsbricks.blocks.metrics.rmse",
+                    "type": "simple",
+                    "scope": "group",
+                    "grouping_columns": ["category"],
+                }
+            ],
+        },
+    }
+
+
+def test_run_backtest_missing_grouping_df_with_group_scope_raises() -> None:
+    """Group-scope metric without grouping_df raises ValueError."""
+    df = _synthetic_monthly_panel()
+    cfg = _group_scope_config()
+
+    with pytest.raises(ValueError, match="grouping_df is required"):
+        run_backtest(config=cfg, df=df)
+
+
+def test_run_backtest_grouping_df_missing_unique_id_raises() -> None:
+    """grouping_df without unique_id column raises ValueError."""
+    df = _synthetic_monthly_panel()
+    cfg = _minimal_config()
+    grouping_df = pd.DataFrame({"series": ["A", "B"], "category": ["c1", "c2"]})
+
+    with pytest.raises(ValueError, match="unique_id"):
+        run_backtest(config=cfg, df=df, grouping_df=grouping_df)
+
+
+def test_run_backtest_grouping_df_missing_grouping_column_raises() -> None:
+    """grouping_df missing a referenced grouping column raises ValueError."""
+    df = _synthetic_monthly_panel()
+    cfg = _group_scope_config()
+    # Has unique_id but not the 'category' column the metric references
+    grouping_df = pd.DataFrame({"unique_id": ["A", "B"], "region": ["east", "west"]})
+
+    with pytest.raises(ValueError, match="missing required grouping columns"):
+        run_backtest(config=cfg, df=df, grouping_df=grouping_df)
