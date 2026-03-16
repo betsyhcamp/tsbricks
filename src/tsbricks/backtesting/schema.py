@@ -163,6 +163,14 @@ class MetricDefinitionConfig(BaseModel):
                 f"aggregation_callable."
             )
 
+        # Composite grouping keys are not yet supported
+        if self.grouping_columns is not None and len(self.grouping_columns) > 1:
+            raise ValueError(
+                f"Metric '{self.name}' has {len(self.grouping_columns)} "
+                f"grouping_columns, but only single-column grouping "
+                f"is currently supported."
+            )
+
         # No key overlap between params, per_series_params, and param_resolvers
         keys_params = set(self.params or {})
         keys_psp = set(self.per_series_params or {})
@@ -191,6 +199,14 @@ class MetricsConfig(BaseModel):
     def _check_group_scope_has_grouping_columns(
         self,
     ) -> MetricsConfig:
+        # Composite grouping keys are not yet supported
+        if self.grouping_columns is not None and len(self.grouping_columns) > 1:
+            raise ValueError(
+                f"Top-level metrics.grouping_columns has "
+                f"{len(self.grouping_columns)} columns, but only "
+                f"single-column grouping is currently supported."
+            )
+
         for defn in self.definitions:
             if defn.scope == "group":
                 has_defn_cols = defn.grouping_columns is not None

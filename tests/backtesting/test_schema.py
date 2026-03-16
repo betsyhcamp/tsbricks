@@ -904,6 +904,33 @@ def test_empty_top_level_grouping_columns_raises() -> None:
         )
 
 
+def test_multi_defn_grouping_columns_raises() -> None:
+    """Multiple grouping_columns on metric definition raises."""
+    with pytest.raises(ValidationError, match="single-column grouping"):
+        MetricDefinitionConfig(
+            name="wape",
+            callable="m.wape",
+            type="simple",
+            scope="group",
+            grouping_columns=["category", "region"],
+        )
+
+
+def test_multi_top_level_grouping_columns_raises() -> None:
+    """Multiple grouping_columns on MetricsConfig raises."""
+    with pytest.raises(ValidationError, match="single-column grouping"):
+        MetricsConfig(
+            definitions=[
+                MetricDefinitionConfig(
+                    name="rmse",
+                    callable="m.rmse",
+                    type="simple",
+                )
+            ],
+            grouping_columns=["category", "region"],
+        )
+
+
 # ---- End-to-end parse_config with metric fields ----
 
 
