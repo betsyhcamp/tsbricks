@@ -8,6 +8,136 @@ from tsbricks.backtesting.schema import MetricsConfig
 from tsbricks.runner._utils import dynamic_import
 
 
+def _compute_per_series_values(
+    defn,
+    metric_fn,
+    kwargs: dict,
+    y_true: pd.DataFrame,
+    y_pred: pd.DataFrame,
+    y_train: pd.DataFrame,
+    unique_ids,
+) -> dict[str, float]:
+    """Compute per-series metric values and return as {unique_id: value} dict.
+
+    Shared by global scope (all series) and group two-stage (group subset).
+    """
+    values: dict[str, float] = {}
+    for uid in unique_ids:
+        y_true_arr = y_true.loc[y_true["unique_id"] == uid, "y"].to_numpy()
+        y_pred_arr = y_pred.loc[y_pred["unique_id"] == uid, "ypred"].to_numpy()
+        y_train_arr = y_train.loc[y_train["unique_id"] == uid, "y"].to_numpy()
+
+        if defn.type == "simple":
+            result = metric_fn(y_true_arr, y_pred_arr, **kwargs)
+        else:
+            result = metric_fn(y_true_arr, y_pred_arr, y_train=y_train_arr, **kwargs)
+
+        values[uid] = result[0] if isinstance(result, tuple) else result
+    return values
+
+
+def _evaluate_global_scope(
+    defn,
+    metric_fn,
+    kwargs: dict,
+    y_true: pd.DataFrame,
+    y_pred: pd.DataFrame,
+    y_train: pd.DataFrame,
+    fold_id: str,
+    fold_weights: dict[str, float] | None,
+    rows: list[dict],
+) -> None:
+    """Compute a global-scope metric via two-stage aggregation.
+
+    Stage 1: compute per-series metric values.
+    Stage 2: call the user-provided aggregation callable with per-series
+    values and fold weights.
+    """
+    if fold_weights is None:
+        raise ValueError(
+            f"fold_weights is required for global-scope metric '{defn.name}' "
+            f"(aggregation_callable={defn.aggregation_callable}), "
+            f"but None was provided."
+        )
+
+    unique_ids = y_pred["unique_id"].unique()
+    per_series_values = _compute_per_series_values(
+        defn, metric_fn, kwargs, y_true, y_pred, y_train, unique_ids
+    )
+
+    agg_fn = dynamic_import(defn.aggregation_callable)
+    agg_kwargs = {**(defn.aggregation_params or {})}
+    agg_kwargs["weights"] = fold_weights
+    value = agg_fn(per_series_values, **agg_kwargs)
+
+    rows.append(
+        {
+            "metric_name": defn.name,
+            "unique_id": None,
+            "fold": fold_id,
+            "scope": "global",
+            "grouping_column_name": None,
+            "aggregation": defn.aggregation,
+            "value": value,
+        }
+    )
+
+
+def _evaluate_group_two_stage(
+    defn,
+    metric_fn,
+    kwargs: dict,
+    y_true: pd.DataFrame,
+    y_pred: pd.DataFrame,
+    y_train: pd.DataFrame,
+    grouping_df: pd.DataFrame | None,
+    metrics_config: MetricsConfig,
+    fold_id: str,
+    fold_weights: dict[str, float] | None,
+    rows: list[dict],
+) -> None:
+    """Compute a group-scope metric via two-stage aggregation.
+
+    For each group: compute per-series metric values for group members,
+    subset fold_weights to the group, then call the aggregation callable.
+    """
+    if fold_weights is None:
+        raise ValueError(
+            f"fold_weights is required for group-scope metric '{defn.name}' "
+            f"with aggregation_callable={defn.aggregation_callable}, "
+            f"but None was provided."
+        )
+
+    group_col = (defn.grouping_columns or metrics_config.grouping_columns)[0]
+    group_map = grouping_df.groupby(group_col)["unique_id"].apply(set).to_dict()  # type: ignore[union-attr]
+
+    for group_label, uid_set in group_map.items():
+        per_series_values = _compute_per_series_values(
+            defn, metric_fn, kwargs, y_true, y_pred, y_train, uid_set
+        )
+
+        group_weights = {
+            uid: fold_weights[uid] for uid in uid_set if uid in fold_weights
+        }
+
+        agg_fn = dynamic_import(defn.aggregation_callable)
+        agg_kwargs = {**(defn.aggregation_params or {})}
+        agg_kwargs["weights"] = group_weights
+        value = agg_fn(per_series_values, **agg_kwargs)
+
+        rows.append(
+            {
+                "metric_name": defn.name,
+                "unique_id": group_label,
+                "fold": fold_id,
+                "scope": "group",
+                "grouping_column_name": group_col,
+                "aggregation": defn.aggregation,
+                "value": value,
+            }
+        )
+
+
 def _evaluate_group_scope(
     defn,
     metric_fn,
@@ -73,9 +203,9 @@ def evaluate_metrics(
         fold_id: Fold identifier (e.g. ``"fold_0"``).
         grouping_df: Series-to-group mapping.  Required when any metric
             has ``scope="group"``.
-        fold_weights: Per-series weights for this fold (used by global
-            scope aggregation in Phase 4).  Currently accepted but
-            unused.
+        fold_weights: Per-series weights for this fold.  Required when
+            any metric has ``scope="global"`` or ``scope="group"`` with
+            an ``aggregation_callable``.
 
     Returns:
         Long-format DataFrame with columns
@@ -119,21 +249,46 @@ def evaluate_metrics(
                 )
 
         elif defn.scope == "group":
-            _evaluate_group_scope(
+            if defn.aggregation_callable:
+                _evaluate_group_two_stage(
+                    defn,
+                    metric_fn,
+                    kwargs,
+                    y_true,
+                    y_pred,
+                    y_train,
+                    grouping_df,
+                    metrics_config,
+                    fold_id,
+                    fold_weights,
+                    rows,
+                )
+            else:
+                _evaluate_group_scope(
+                    defn,
+                    metric_fn,
+                    kwargs,
+                    y_true,
+                    y_pred,
+                    y_train,
+                    grouping_df,
+                    metrics_config,
+                    fold_id,
+                    rows,
+                )
+
+        elif defn.scope == "global":
+            _evaluate_global_scope(
                 defn,
                 metric_fn,
                 kwargs,
                 y_true,
                 y_pred,
                 y_train,
-                grouping_df,
-                metrics_config,
                 fold_id,
+                fold_weights,
                 rows,
             )
-
-        elif defn.scope == "global":
-            pass  # Phase 4
 
     return pd.DataFrame(
         rows,

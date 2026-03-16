@@ -484,3 +484,265 @@ def test_mixed_scope_identifiers():
     group_rows = result[result["scope"] == "group"]
     assert set(per_series_rows["unique_id"]) == {"A", "B", "C", "D"}
     assert set(group_rows["unique_id"]) == {"cat1", "cat2"}
+
+
+# ---- global scope ----
+
+UNWEIGHTED_MEAN = "tsbricks._testing.agg_callables.unweighted_mean"
+WEIGHTED_MEAN = "tsbricks._testing.agg_callables.weighted_mean"
+
+
+def _three_series_data():
+    """Three series with known RMSE values for global scope tests.
+
+    Series A: y_true=[2,4], y_pred=[1,3] → RMSE=1.0
+    Series B: y_true=[10,20], y_pred=[10,20] → RMSE=0.0
+    Series C: y_true=[5,5], y_pred=[3,3] → RMSE=2.0
+
+    Unweighted mean RMSE = (1.0 + 0.0 + 2.0) / 3 = 1.0
+    """
+    y_true = pd.DataFrame(
+        {
+            "unique_id": ["A", "A", "B", "B", "C", "C"],
+            "ds": [1, 2, 1, 2, 1, 2],
+            "y": [2.0, 4.0, 10.0, 20.0, 5.0, 5.0],
+        }
+    )
+    y_pred = pd.DataFrame(
+        {
+            "unique_id": ["A", "A", "B", "B", "C", "C"],
+            "ds": [1, 2, 1, 2, 1, 2],
+            "ypred": [1.0, 3.0, 10.0, 20.0, 3.0, 3.0],
+        }
+    )
+    y_train = pd.DataFrame(
+        {
+            "unique_id": ["A"] * 4 + ["B"] * 4 + ["C"] * 4,
+            "ds": list(range(1, 5)) * 3,
+            "y": [0.0, 1.0, 2.0, 3.0] * 3,
+        }
+    )
+    return y_true, y_pred, y_train
+
+
+def _global_metrics_config(
+    agg_callable: str = UNWEIGHTED_MEAN,
+    aggregation_params: dict | None = None,
+) -> MetricsConfig:
+    """Build a MetricsConfig with a single global-scope metric."""
+    return MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="rmse_global",
+                callable="tsbricks.blocks.metrics.rmse",
+                type="simple",
+                scope="global",
+                aggregation_callable=agg_callable,
+                aggregation_params=aggregation_params,
+            )
+        ],
+    )
+
+
+def _global_scope_result(weights=None):
+    """Evaluate global-scope RMSE with unweighted mean on _three_series_data."""
+    y_true, y_pred, y_train = _three_series_data()
+    config = _global_metrics_config()
+    if weights is None:
+        weights = {"A": 1.0, "B": 1.0, "C": 1.0}
+    return evaluate_metrics(
+        y_true,
+        y_pred,
+        y_train,
+        config,
+        "fold_0",
+        fold_weights=weights,
+    )
+
+
+def test_global_scope_single_row():
+    """Global scope emits exactly one row."""
+    result = _global_scope_result()
+    assert len(result) == 1
+
+
+def test_global_scope_output_metadata():
+    """Global scope row has correct metadata fields."""
+    result = _global_scope_result()
+    row = result.iloc[0]
+
+    assert row["scope"] == "global"
+    assert row["unique_id"] is None
+    assert row["grouping_column_name"] is None
+    assert row["metric_name"] == "rmse_global"
+
+
+def test_global_scope_unweighted_mean_value():
+    """Global-scope RMSE with unweighted_mean = (1.0+0.0+2.0)/3."""
+    result = _global_scope_result()
+
+    assert result.iloc[0]["value"] == pytest.approx(1.0)
+
+
+def test_global_scope_weighted_mean_value():
+    """Global-scope RMSE with weighted_mean uses weights correctly."""
+    y_true, y_pred, y_train = _three_series_data()
+    config = _global_metrics_config(agg_callable=WEIGHTED_MEAN)
+    # A: RMSE=1.0, weight=1; B: RMSE=0.0, weight=2; C: RMSE=2.0, weight=3
+    # weighted = (1*1 + 0*2 + 2*3) / (1+2+3) = 7/6
+    weights = {"A": 1.0, "B": 2.0, "C": 3.0}
+
+    result = evaluate_metrics(
+        y_true,
+        y_pred,
+        y_train,
+        config,
+        "fold_0",
+        fold_weights=weights,
+    )
+
+    assert result.iloc[0]["value"] == pytest.approx(7.0 / 6.0)
+
+
+def test_global_scope_requires_fold_weights():
+    """Global scope raises ValueError when fold_weights is None."""
+    y_true, y_pred, y_train = _three_series_data()
+    config = _global_metrics_config()
+
+    with pytest.raises(ValueError, match="fold_weights is required"):
+        evaluate_metrics(
+            y_true,
+            y_pred,
+            y_train,
+            config,
+            "fold_0",
+            fold_weights=None,
+        )
+
+
+def test_mixed_per_series_and_global_row_counts():
+    """Mixed per_series + global produces correct row counts."""
+    y_true, y_pred, y_train = _three_series_data()
+    config = MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="rmse_series",
+                callable="tsbricks.blocks.metrics.rmse",
+                type="simple",
+            ),
+            MetricDefinitionConfig(
+                name="rmse_global",
+                callable="tsbricks.blocks.metrics.rmse",
+                type="simple",
+                scope="global",
+                aggregation_callable=UNWEIGHTED_MEAN,
+            ),
+        ],
+    )
+    weights = {"A": 1.0, "B": 1.0, "C": 1.0}
+
+    result = evaluate_metrics(
+        y_true,
+        y_pred,
+        y_train,
+        config,
+        "fold_0",
+        fold_weights=weights,
+    )
+
+    per_series_rows = result[result["scope"] == "per_series"]
+    global_rows = result[result["scope"] == "global"]
+    assert len(per_series_rows) == 3
+    assert len(global_rows) == 1
+
+
+# ---- group scope with aggregation callable (two-stage) ----
+
+
+def _group_two_stage_result():
+    """Evaluate group two-stage RMSE with weighted_mean on _four_series_data.
+
+    Groups: cat1={A,B}, cat2={C,D}
+    Per-series RMSE: A=1.0, B=0.0, C=2.0, D=0.0
+
+    cat1: weighted_mean({A:1.0, B:0.0}, weights={A:1, B:3}) = 1/4
+    cat2: weighted_mean({C:2.0, D:0.0}, weights={C:2, D:1}) = 4/3
+    """
+    y_true, y_pred, y_train, grouping_df = _four_series_data()
+    config = MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="rmse_group_agg",
+                callable="tsbricks.blocks.metrics.rmse",
+                type="simple",
+                scope="group",
+                grouping_columns=["category"],
+                aggregation_callable=WEIGHTED_MEAN,
+            )
+        ],
+    )
+    weights = {"A": 1.0, "B": 3.0, "C": 2.0, "D": 1.0}
+    return evaluate_metrics(
+        y_true,
+        y_pred,
+        y_train,
+        config,
+        "fold_0",
+        grouping_df=grouping_df,
+        fold_weights=weights,
+    )
+
+
+def test_group_two_stage_row_count():
+    """Group two-stage emits one row per group."""
+    result = _group_two_stage_result()
+    assert len(result) == 2
+    assert set(result["unique_id"]) == {"cat1", "cat2"}
+
+
+def test_group_two_stage_output_metadata():
+    """Group two-stage rows have correct scope and grouping_column_name."""
+    result = _group_two_stage_result()
+
+    assert (result["scope"] == "group").all()
+    assert (result["grouping_column_name"] == "category").all()
+
+
+def test_group_two_stage_weighted_values():
+    """Group two-stage uses per-group weight subsets correctly."""
+    result = _group_two_stage_result()
+
+    # cat1: weighted_mean({A:1.0, B:0.0}, {A:1, B:3}) = 1/4 = 0.25
+    # cat2: weighted_mean({C:2.0, D:0.0}, {C:2, D:1}) = 4/3
+    cat1_val = result.loc[result["unique_id"] == "cat1", "value"].iloc[0]
+    cat2_val = result.loc[result["unique_id"] == "cat2", "value"].iloc[0]
+    assert cat1_val == pytest.approx(0.25)
+    assert cat2_val == pytest.approx(4.0 / 3.0)
+
+
+def test_group_two_stage_requires_fold_weights():
+    """Group two-stage raises ValueError when fold_weights is None."""
+    y_true, y_pred, y_train, grouping_df = _four_series_data()
+    config = MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="rmse_group_agg",
+                callable="tsbricks.blocks.metrics.rmse",
+                type="simple",
+                scope="group",
+                grouping_columns=["category"],
+                aggregation_callable=WEIGHTED_MEAN,
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="fold_weights is required"):
+        evaluate_metrics(
+            y_true,
+            y_pred,
+            y_train,
+            config,
+            "fold_0",
+            grouping_df=grouping_df,
+            fold_weights=None,
+        )
