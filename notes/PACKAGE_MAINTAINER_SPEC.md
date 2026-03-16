@@ -286,6 +286,15 @@ test:
   # horizon inherited from cross_validation.horizon
 ```
 
+- **Group and global metric scopes + pooled aggregation** — Extends the metrics system beyond `per_series` scope and `per_fold_mean` aggregation. See `spec_pooled_grouped_error_metrics.md` for the full specification. Key additions:
+  - `scope: group` — metrics computed across groups of series (e.g., WAPE by product category). Requires `grouping_df` parameter.
+  - `scope: global` — two-stage metrics: per-series computation + aggregation callable (e.g., WRMSSE = per-series RMSSE + weighted mean).
+  - `aggregation: pooled` — concatenate actuals/predictions across folds before computing. For context-aware metrics, uses first fold's training data with a warning (theoretically not well-defined in rolling forecast origin backtesting).
+  - `param_resolvers` — fold-dependent per-series parameters computed from training data (e.g., fallback scale for RMSSE).
+  - `weights_df` — user-provided per-series weights varying by forecast origin, with columns `[unique_id, forecast_origin, raw_weight]`.
+  - `grouping_df` and `weights_df` accept DataFrame or file path; composable functions always receive DataFrames.
+  - Two new output columns: `scope` and `grouping_column_name`.
+
 ______________________________________________________________________
 
 ## 8. Transform Architecture

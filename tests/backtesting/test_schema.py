@@ -5,7 +5,13 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from tsbricks.backtesting.schema import BacktestConfig, parse_config
+from tsbricks.backtesting.schema import (
+    BacktestConfig,
+    MetricDefinitionConfig,
+    MetricsConfig,
+    ParamResolverConfig,
+    parse_config,
+)
 
 
 # ---- parse_config argument validation ----
@@ -602,3 +608,410 @@ def test_normalized_dates_no_warning(valid_cfg: dict) -> None:
     with warnings.catch_warnings():
         warnings.filterwarnings("error", category=UserWarning)
         parse_config(config=valid_cfg)
+
+
+# ---- ParamResolverConfig ----
+
+
+def test_param_resolver_config_round_trips() -> None:
+    """ParamResolverConfig with all fields parses correctly."""
+    prc = ParamResolverConfig(
+        callable="my.module.resolver",
+        params={"season_length": 12},
+        grouping_columns=["category"],
+    )
+
+    assert prc.callable == "my.module.resolver"
+    assert prc.params == {"season_length": 12}
+    assert prc.grouping_columns == ["category"]
+
+
+def test_param_resolver_config_minimal() -> None:
+    """ParamResolverConfig with only callable parses correctly."""
+    prc = ParamResolverConfig(callable="my.module.resolver")
+
+    assert prc.params is None
+    assert prc.grouping_columns is None
+
+
+# ---- MetricDefinitionConfig fields ----
+
+
+def test_metric_definition_all_fields() -> None:
+    """MetricDefinitionConfig accepts all fields."""
+    defn = MetricDefinitionConfig(
+        name="wape_global",
+        callable="my.metrics.wape",
+        type="simple",
+        scope="global",
+        aggregation="pooled",
+        per_series_params={"m": {"A": 12, "B": 6}},
+        param_resolvers={"scale": ParamResolverConfig(callable="my.resolvers.scale")},
+        aggregation_callable="my.agg.weighted_mean",
+        aggregation_params={"normalize": True},
+    )
+
+    assert defn.scope == "global"
+    assert defn.aggregation == "pooled"
+    assert defn.per_series_params == {"m": {"A": 12, "B": 6}}
+    assert "scale" in defn.param_resolvers
+    assert defn.aggregation_callable == "my.agg.weighted_mean"
+    assert defn.aggregation_params == {"normalize": True}
+
+
+def test_metric_definition_defaults() -> None:
+    """MetricDefinitionConfig applies correct defaults for optional fields."""
+    defn = MetricDefinitionConfig(
+        name="rmse",
+        callable="tsbricks.blocks.metrics.rmse",
+        type="simple",
+    )
+
+    assert defn.scope == "per_series"
+    assert defn.aggregation == "per_fold_mean"
+    assert defn.grouping_columns is None
+    assert defn.per_series_params is None
+    assert defn.param_resolvers is None
+    assert defn.aggregation_callable is None
+    assert defn.aggregation_params is None
+
+
+# ---- Literal validation ----
+
+
+def test_invalid_scope_raises() -> None:
+    """Invalid scope value raises ValidationError."""
+    with pytest.raises(ValidationError):
+        MetricDefinitionConfig(
+            name="rmse",
+            callable="m.rmse",
+            type="simple",
+            scope="invalid",
+        )
+
+
+def test_invalid_aggregation_raises() -> None:
+    """Invalid aggregation value raises ValidationError."""
+    with pytest.raises(ValidationError):
+        MetricDefinitionConfig(
+            name="rmse",
+            callable="m.rmse",
+            type="simple",
+            aggregation="invalid",
+        )
+
+
+# ---- Validator: scope=global requires aggregation_callable ----
+
+
+def test_scope_global_requires_aggregation_callable() -> None:
+    """scope='global' without aggregation_callable raises."""
+    with pytest.raises(ValidationError, match="aggregation_callable"):
+        MetricDefinitionConfig(
+            name="wape",
+            callable="m.wape",
+            type="simple",
+            scope="global",
+        )
+
+
+def test_scope_global_with_aggregation_callable_ok() -> None:
+    """scope='global' with aggregation_callable is valid."""
+    defn = MetricDefinitionConfig(
+        name="wape",
+        callable="m.wape",
+        type="simple",
+        scope="global",
+        aggregation_callable="m.agg.weighted_mean",
+    )
+
+    assert defn.scope == "global"
+
+
+# ---- Validator: no key overlap ----
+
+
+def test_param_key_overlap_params_and_psp_raises() -> None:
+    """Overlapping keys in params and per_series_params raises."""
+    with pytest.raises(ValidationError, match="overlapping keys"):
+        MetricDefinitionConfig(
+            name="rmsse",
+            callable="m.rmsse",
+            type="context_aware",
+            params={"m": 1},
+            per_series_params={"m": {"A": 12}},
+        )
+
+
+def test_param_key_overlap_params_and_resolvers_raises() -> None:
+    """Overlapping keys in params and param_resolvers raises."""
+    with pytest.raises(ValidationError, match="overlapping keys"):
+        MetricDefinitionConfig(
+            name="rmsse",
+            callable="m.rmsse",
+            type="context_aware",
+            params={"scale": 1.0},
+            param_resolvers={"scale": ParamResolverConfig(callable="m.resolve_scale")},
+        )
+
+
+def test_param_key_overlap_psp_and_resolvers_raises() -> None:
+    """Overlapping keys in per_series_params and resolvers."""
+    with pytest.raises(ValidationError, match="overlapping keys"):
+        MetricDefinitionConfig(
+            name="rmsse",
+            callable="m.rmsse",
+            type="context_aware",
+            per_series_params={"scale": {"A": 1.0}},
+            param_resolvers={"scale": ParamResolverConfig(callable="m.resolve_scale")},
+        )
+
+
+def test_no_key_overlap_disjoint_ok() -> None:
+    """Disjoint keys across params, psp, resolvers is valid."""
+    defn = MetricDefinitionConfig(
+        name="rmsse",
+        callable="m.rmsse",
+        type="context_aware",
+        params={"m": 1},
+        per_series_params={"fallback": {"A": 1.0}},
+        param_resolvers={"scale": ParamResolverConfig(callable="m.resolve_scale")},
+    )
+
+    assert defn.params == {"m": 1}
+
+
+# ---- Validator: scope=group requires grouping_columns ----
+
+
+def test_scope_group_no_grouping_columns_raises() -> None:
+    """scope='group' with no grouping_columns anywhere raises."""
+    with pytest.raises(ValidationError, match="grouping_columns"):
+        MetricsConfig(
+            definitions=[
+                MetricDefinitionConfig(
+                    name="wape",
+                    callable="m.wape",
+                    type="simple",
+                    scope="group",
+                )
+            ],
+        )
+
+
+def test_scope_group_with_defn_grouping_columns_ok() -> None:
+    """scope='group' with grouping_columns on definition works."""
+    cfg = MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="wape",
+                callable="m.wape",
+                type="simple",
+                scope="group",
+                grouping_columns=["category"],
+            )
+        ],
+    )
+
+    assert cfg.definitions[0].grouping_columns == ["category"]
+
+
+def test_scope_group_with_top_level_grouping_columns_ok() -> None:
+    """scope='group' with top-level grouping_columns works."""
+    cfg = MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="wape",
+                callable="m.wape",
+                type="simple",
+                scope="group",
+            )
+        ],
+        grouping_columns=["category"],
+    )
+
+    assert cfg.grouping_columns == ["category"]
+
+
+# ---- MetricsConfig fields ----
+
+
+def test_metrics_config_grouping_and_weights_source() -> None:
+    """grouping_source and weights_source parse correctly."""
+    cfg = MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="rmse",
+                callable="m.rmse",
+                type="simple",
+            )
+        ],
+        grouping_source="/path/to/grouping.parquet",
+        weights_source="/path/to/weights.parquet",
+    )
+
+    assert cfg.grouping_source == "/path/to/grouping.parquet"
+    assert cfg.weights_source == "/path/to/weights.parquet"
+
+
+# ---- Full config defaults ----
+
+
+def test_full_config_defaults(valid_cfg: dict) -> None:
+    """Parsed config applies correct defaults for all optional metric fields."""
+    cfg = parse_config(config=valid_cfg)
+
+    assert isinstance(cfg, BacktestConfig)
+    defn = cfg.metrics.definitions[0]
+    assert defn.scope == "per_series"
+    assert defn.aggregation == "per_fold_mean"
+    assert defn.grouping_columns is None
+    assert defn.per_series_params is None
+    assert defn.param_resolvers is None
+    assert defn.aggregation_callable is None
+    assert defn.aggregation_params is None
+    assert cfg.metrics.grouping_source is None
+    assert cfg.metrics.weights_source is None
+
+
+# ---- Empty grouping_columns rejected ----
+
+
+def test_empty_defn_grouping_columns_raises() -> None:
+    """Empty grouping_columns on metric definition raises."""
+    with pytest.raises(ValidationError):
+        MetricDefinitionConfig(
+            name="wape",
+            callable="m.wape",
+            type="simple",
+            scope="group",
+            grouping_columns=[],
+        )
+
+
+def test_empty_top_level_grouping_columns_raises() -> None:
+    """Empty grouping_columns on MetricsConfig raises."""
+    with pytest.raises(ValidationError):
+        MetricsConfig(
+            definitions=[
+                MetricDefinitionConfig(
+                    name="rmse",
+                    callable="m.rmse",
+                    type="simple",
+                )
+            ],
+            grouping_columns=[],
+        )
+
+
+def test_multi_defn_grouping_columns_raises() -> None:
+    """Multiple grouping_columns on metric definition raises."""
+    with pytest.raises(ValidationError, match="single-column grouping"):
+        MetricDefinitionConfig(
+            name="wape",
+            callable="m.wape",
+            type="simple",
+            scope="group",
+            grouping_columns=["category", "region"],
+        )
+
+
+def test_multi_top_level_grouping_columns_raises() -> None:
+    """Multiple grouping_columns on MetricsConfig raises."""
+    with pytest.raises(ValidationError, match="single-column grouping"):
+        MetricsConfig(
+            definitions=[
+                MetricDefinitionConfig(
+                    name="rmse",
+                    callable="m.rmse",
+                    type="simple",
+                )
+            ],
+            grouping_columns=["category", "region"],
+        )
+
+
+# ---- End-to-end parse_config with metric fields ----
+
+
+def _cfg_with_all_metric_fields(valid_cfg: dict) -> dict:
+    """Inject all metric fields into valid_cfg for parse_config tests."""
+    valid_cfg["metrics"] = {
+        "definitions": [
+            {
+                "name": "rmse",
+                "callable": "tsbricks.blocks.metrics.rmse",
+                "type": "simple",
+            },
+            {
+                "name": "wape_global",
+                "callable": "my.metrics.wape",
+                "type": "simple",
+                "scope": "global",
+                "aggregation": "pooled",
+                "grouping_columns": ["category"],
+                "per_series_params": {
+                    "m": {"A": 12, "B": 6},
+                },
+                "param_resolvers": {
+                    "scale": {
+                        "callable": "my.resolvers.scale",
+                        "params": {"season_length": 12},
+                    },
+                },
+                "aggregation_callable": "my.agg.weighted_mean",
+                "aggregation_params": {"normalize": True},
+            },
+        ],
+        "grouping_columns": ["region"],
+        "grouping_source": "/data/grouping.parquet",
+        "weights_source": "/data/weights.parquet",
+    }
+    return valid_cfg
+
+
+def test_parse_config_definition_defaults(
+    valid_cfg: dict,
+) -> None:
+    """Definition with only required fields preserves defaults after parsing."""
+    cfg = parse_config(config=_cfg_with_all_metric_fields(valid_cfg))
+
+    d0 = cfg.metrics.definitions[0]
+    assert d0.scope == "per_series"
+    assert d0.aggregation == "per_fold_mean"
+    assert d0.grouping_columns is None
+    assert d0.per_series_params is None
+    assert d0.param_resolvers is None
+    assert d0.aggregation_callable is None
+    assert d0.aggregation_params is None
+
+
+def test_parse_config_definition_all_fields(
+    valid_cfg: dict,
+) -> None:
+    """All metric definition fields parse correctly from raw dict."""
+    cfg = parse_config(config=_cfg_with_all_metric_fields(valid_cfg))
+
+    d1 = cfg.metrics.definitions[1]
+    assert d1.scope == "global"
+    assert d1.aggregation == "pooled"
+    assert d1.grouping_columns == ["category"]
+    assert d1.per_series_params == {"m": {"A": 12, "B": 6}}
+    assert "scale" in d1.param_resolvers
+    assert d1.param_resolvers["scale"].callable == "my.resolvers.scale"
+    assert d1.param_resolvers["scale"].params == {
+        "season_length": 12,
+    }
+    assert d1.aggregation_callable == "my.agg.weighted_mean"
+    assert d1.aggregation_params == {"normalize": True}
+
+
+def test_parse_config_top_level_metrics_fields(
+    valid_cfg: dict,
+) -> None:
+    """Top-level MetricsConfig fields parse correctly from raw dict."""
+    cfg = parse_config(config=_cfg_with_all_metric_fields(valid_cfg))
+
+    assert cfg.metrics.grouping_columns == ["region"]
+    assert cfg.metrics.grouping_source == "/data/grouping.parquet"
+    assert cfg.metrics.weights_source == "/data/weights.parquet"
