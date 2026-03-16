@@ -130,22 +130,95 @@ class ModelConfig(BaseModel):
     serialization: dict[str, Any] | None = None
 
 
+class ParamResolverConfig(BaseModel):
+    """Configuration for a fold-dependent per-series parameter resolver."""
+
+    callable: str
+    params: dict[str, Any] | None = None
+    grouping_columns: list[str] | None = None
+
+
 class MetricDefinitionConfig(BaseModel):
     """Single metric definition within the metrics section."""
 
     name: str
     callable: str
     type: Literal["simple", "context_aware"]
-    scope: str = "per_series"
-    aggregation: str = "per_fold_mean"
+    scope: Literal["per_series", "group", "global"] = "per_series"
+    aggregation: Literal["per_fold_mean", "pooled"] = "per_fold_mean"
     params: dict[str, Any] | None = None
+    grouping_columns: list[str] | None = Field(None, min_length=1)
+    per_series_params: dict[str, dict[str, Any]] | None = None
+    param_resolvers: dict[str, ParamResolverConfig] | None = None
+    aggregation_callable: str | None = None
+    aggregation_params: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _check_metric_constraints(self) -> MetricDefinitionConfig:
+        # scope: global requires aggregation_callable
+        if self.scope == "global" and self.aggregation_callable is None:
+            raise ValueError(
+                f"Metric '{self.name}' has scope='global' but no "
+                f"aggregation_callable. Global scope requires an "
+                f"aggregation_callable."
+            )
+
+        # Composite grouping keys are not yet supported
+        if self.grouping_columns is not None and len(self.grouping_columns) > 1:
+            raise ValueError(
+                f"Metric '{self.name}' has {len(self.grouping_columns)} "
+                f"grouping_columns, but only single-column grouping "
+                f"is currently supported."
+            )
+
+        # No key overlap between params, per_series_params, and param_resolvers
+        keys_params = set(self.params or {})
+        keys_psp = set(self.per_series_params or {})
+        keys_pr = set(self.param_resolvers or {})
+        overlap = (
+            (keys_params & keys_psp) | (keys_params & keys_pr) | (keys_psp & keys_pr)
+        )
+        if overlap:
+            raise ValueError(
+                f"Metric '{self.name}' has overlapping keys across params, "
+                f"per_series_params, and param_resolvers: {overlap}."
+            )
+
+        return self
 
 
 class MetricsConfig(BaseModel):
     """Metrics section: definitions and optional grouping."""
 
     definitions: list[MetricDefinitionConfig]
-    grouping_columns: list[str] | None = None
+    grouping_columns: list[str] | None = Field(None, min_length=1)
+    grouping_source: str | None = None
+    weights_source: str | None = None
+
+    @model_validator(mode="after")
+    def _check_group_scope_has_grouping_columns(
+        self,
+    ) -> MetricsConfig:
+        # Composite grouping keys are not yet supported
+        if self.grouping_columns is not None and len(self.grouping_columns) > 1:
+            raise ValueError(
+                f"Top-level metrics.grouping_columns has "
+                f"{len(self.grouping_columns)} columns, but only "
+                f"single-column grouping is currently supported."
+            )
+
+        for defn in self.definitions:
+            if defn.scope == "group":
+                has_defn_cols = defn.grouping_columns is not None
+                has_top_cols = self.grouping_columns is not None
+                if not has_defn_cols and not has_top_cols:
+                    raise ValueError(
+                        f"Metric '{defn.name}' has scope='group' "
+                        f"but no grouping_columns on the metric "
+                        f"definition or in the top-level "
+                        f"metrics config."
+                    )
+        return self
 
 
 class TestConfig(BaseModel):

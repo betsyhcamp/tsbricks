@@ -8,7 +8,7 @@ from tsbricks.blocks.metadata import get_git_hash, get_uv_lock_info
 from tsbricks.backtesting.cross_validation import generate_folds
 from tsbricks.backtesting.evaluation import evaluate_metrics
 from tsbricks.backtesting.results import BacktestResults, CVResults, TestResults
-from tsbricks.backtesting.schema import parse_config
+from tsbricks.backtesting.schema import BacktestConfig, parse_config
 from tsbricks.runner import (
     apply_transforms,
     fit_transforms,
@@ -17,10 +17,109 @@ from tsbricks.runner import (
 )
 
 
+def _validate_grouping_df(
+    grouping_df: pd.DataFrame | None,
+    backtest_config: BacktestConfig,
+) -> None:
+    """Validate grouping_df against the backtest config.
+
+    Raises:
+        ValueError: If a group-scope metric exists but grouping_df is
+            missing, or if grouping_df is missing required columns.
+    """
+    has_group_scope = any(
+        defn.scope == "group" for defn in backtest_config.metrics.definitions
+    )
+
+    if has_group_scope and grouping_df is None:
+        raise ValueError(
+            "grouping_df is required when any metric has scope='group', "
+            "but none was provided (and metrics.grouping_source is not set)."
+        )
+
+    if grouping_df is None:
+        return
+
+    if "unique_id" not in grouping_df.columns:
+        raise ValueError("grouping_df must contain a 'unique_id' column.")
+
+    # Collect all referenced grouping columns
+    required_cols: set[str] = set()
+    top_level_cols = backtest_config.metrics.grouping_columns
+    for defn in backtest_config.metrics.definitions:
+        if defn.grouping_columns is not None:
+            required_cols.update(defn.grouping_columns)
+        elif top_level_cols is not None:
+            required_cols.update(top_level_cols)
+
+    missing = required_cols - set(grouping_df.columns)
+    if missing:
+        raise ValueError(
+            f"grouping_df is missing required grouping columns: {sorted(missing)}."
+        )
+
+
+def _validate_weights_df(
+    weights_df: pd.DataFrame | None,
+    backtest_config: BacktestConfig,
+    fold_origins: list[pd.Timestamp | int],
+) -> None:
+    """Validate weights_df against the backtest config.
+
+    Args:
+        weights_df: Per-series, per-origin weights DataFrame.
+        backtest_config: Parsed backtest configuration.
+        fold_origins: Typed fold origins (``pd.Timestamp`` or ``int``),
+            used for origin coverage checks so that types match
+            ``weights_df["forecast_origin"]``.
+
+    Raises:
+        ValueError: If a metric with ``aggregation_callable`` exists but
+            weights_df is missing, or if weights_df is missing required
+            columns or forecast origin coverage.
+    """
+    has_aggregation_callable = any(
+        defn.aggregation_callable is not None
+        for defn in backtest_config.metrics.definitions
+    )
+
+    if has_aggregation_callable and weights_df is None:
+        raise ValueError(
+            "weights_df is required when any metric has an aggregation_callable, "
+            "but none was provided (and metrics.weights_source is not set)."
+        )
+
+    if weights_df is None:
+        return
+
+    required_cols = {"unique_id", "forecast_origin", "raw_weight"}
+    missing = required_cols - set(weights_df.columns)
+    if missing:
+        raise ValueError(f"weights_df is missing required columns: {sorted(missing)}.")
+
+    # Check forecast origin coverage using typed origins
+    expected_origins: set[pd.Timestamp | int] = set(fold_origins)
+    if backtest_config.test is not None:
+        if backtest_config.data.freq == 1:
+            expected_origins.add(int(backtest_config.test.test_origin))
+        else:
+            expected_origins.add(pd.Timestamp(backtest_config.test.test_origin))
+
+    covered_origins = set(weights_df["forecast_origin"].unique())
+    missing_origins = expected_origins - covered_origins
+    if missing_origins:
+        raise ValueError(
+            f"weights_df is missing rows for forecast origins: "
+            f"{sorted(str(o) for o in missing_origins)}."
+        )
+
+
 def run_backtest(
     config_path: str | None = None,
     config: dict | None = None,
     df: pd.DataFrame | None = None,
+    grouping_df: pd.DataFrame | str | None = None,
+    weights_df: pd.DataFrame | str | None = None,
 ) -> BacktestResults:
     """Run a full cross-validated backtest.
 
@@ -34,6 +133,11 @@ def run_backtest(
         config: Configuration dict to parse directly.
         df: Input panel DataFrame with at least the columns specified in
             ``DataConfig`` (defaults: ``ds``, ``unique_id``, ``y``).
+        grouping_df: Series-to-group mapping DataFrame or path to a
+            parquet file.  Required when any metric has ``scope="group"``.
+        weights_df: Per-series, per-origin weights DataFrame or path to
+            a parquet file.  Required when any metric has an
+            ``aggregation_callable``.
 
     Returns:
         A :class:`BacktestResults` containing CV metrics, forecasts,
@@ -59,6 +163,20 @@ def run_backtest(
     }
     df = df.rename(columns=col_map)
 
+    # ---- resolve grouping_df ----
+    if isinstance(grouping_df, str):
+        grouping_df = pd.read_parquet(grouping_df)
+    elif grouping_df is None and backtest_config.metrics.grouping_source is not None:
+        grouping_df = pd.read_parquet(backtest_config.metrics.grouping_source)
+
+    _validate_grouping_df(grouping_df, backtest_config)
+
+    # ---- resolve weights_df ----
+    if isinstance(weights_df, str):
+        weights_df = pd.read_parquet(weights_df)
+    elif weights_df is None and backtest_config.metrics.weights_source is not None:
+        weights_df = pd.read_parquet(backtest_config.metrics.weights_source)
+
     cv_folds, test_split = generate_folds(
         df,
         backtest_config.cross_validation,
@@ -66,10 +184,22 @@ def run_backtest(
         test_config=backtest_config.test,
     )
 
+    if backtest_config.data.freq == 1:
+        fold_origins = sorted(
+            int(origin) for origin in backtest_config.cross_validation.forecast_origins
+        )
+    else:
+        fold_origins = sorted(
+            pd.Timestamp(origin)
+            for origin in backtest_config.cross_validation.forecast_origins
+        )
+
+    _validate_weights_df(weights_df, backtest_config, fold_origins)
+
     forecasts_per_fold: dict[str, pd.DataFrame] = {}
     all_metrics: list[pd.DataFrame] = []
 
-    for fold_id, splits in cv_folds.items():
+    for fold_idx, (fold_id, splits) in enumerate(cv_folds.items()):
         train_df = splits["train"]
         val_df = splits["val"]
 
@@ -87,28 +217,26 @@ def run_backtest(
 
         forecast_original = inverse_transforms(forecast_df, fitted_transforms)
 
+        fold_weights: dict[str, float] | None = None
+        if weights_df is not None:
+            fold_origin = fold_origins[fold_idx]
+            fold_rows = weights_df[weights_df["forecast_origin"] == fold_origin]
+            fold_weights = dict(zip(fold_rows["unique_id"], fold_rows["raw_weight"]))
+
         fold_metrics = evaluate_metrics(
             y_true=val_df,
             y_pred=forecast_original,
             y_train=train_df,
             metrics_config=backtest_config.metrics,
             fold_id=fold_id,
+            grouping_df=grouping_df,
+            fold_weights=fold_weights,
         )
 
         forecasts_per_fold[fold_id] = forecast_original
         all_metrics.append(fold_metrics)
 
     metrics = pd.concat(all_metrics, ignore_index=True)
-
-    if backtest_config.data.freq == 1:
-        fold_origins = sorted(
-            int(origin) for origin in backtest_config.cross_validation.forecast_origins
-        )
-    else:
-        fold_origins = sorted(
-            pd.Timestamp(origin)
-            for origin in backtest_config.cross_validation.forecast_origins
-        )
 
     cv_results = CVResults(
         forecasts_per_fold=forecasts_per_fold,
@@ -136,14 +264,6 @@ def run_backtest(
 
         forecast_original = inverse_transforms(forecast_df, fitted_transforms)
 
-        test_metrics = evaluate_metrics(
-            y_true=test_test_df,
-            y_pred=forecast_original,
-            y_train=test_train_df,
-            metrics_config=backtest_config.metrics,
-            fold_id="test",
-        )
-
         if backtest_config.data.freq == 1:
             test_origin_typed: pd.Timestamp | int = int(
                 backtest_config.test.test_origin  # type: ignore[union-attr]
@@ -152,6 +272,23 @@ def run_backtest(
             test_origin_typed = pd.Timestamp(
                 backtest_config.test.test_origin  # type: ignore[union-attr]
             )
+
+        test_fold_weights: dict[str, float] | None = None
+        if weights_df is not None:
+            test_rows = weights_df[weights_df["forecast_origin"] == test_origin_typed]
+            test_fold_weights = dict(
+                zip(test_rows["unique_id"], test_rows["raw_weight"])
+            )
+
+        test_metrics = evaluate_metrics(
+            y_true=test_test_df,
+            y_pred=forecast_original,
+            y_train=test_train_df,
+            metrics_config=backtest_config.metrics,
+            fold_id="test",
+            grouping_df=grouping_df,
+            fold_weights=test_fold_weights,
+        )
 
         test_results = TestResults(
             forecasts=forecast_original,
