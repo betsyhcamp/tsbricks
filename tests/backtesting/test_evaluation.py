@@ -746,3 +746,63 @@ def test_group_two_stage_requires_fold_weights():
             grouping_df=grouping_df,
             fold_weights=None,
         )
+
+
+# ---- global scope: context-aware and aggregation_params ----
+
+SCALED_MEAN = "tsbricks._testing.agg_callables.scaled_mean"
+
+
+def test_global_scope_context_aware_metric():
+    """Global scope with context-aware metric flows y_train through stage 1."""
+    y_true, y_pred, y_train = _three_series_data()
+    config = MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="rmsse_global",
+                callable="tsbricks.blocks.metrics.rmsse",
+                type="context_aware",
+                scope="global",
+                aggregation_callable=UNWEIGHTED_MEAN,
+            )
+        ],
+    )
+    weights = {"A": 1.0, "B": 1.0, "C": 1.0}
+
+    result = evaluate_metrics(
+        y_true,
+        y_pred,
+        y_train,
+        config,
+        "fold_0",
+        fold_weights=weights,
+    )
+
+    assert len(result) == 1
+    assert result.iloc[0]["scope"] == "global"
+    # All three series have identical y_train=[0,1,2,3] → scale=1.0
+    # So RMSSE == RMSE for each: A=1.0, B=0.0, C=2.0
+    # unweighted_mean = 1.0
+    assert result.iloc[0]["value"] == pytest.approx(1.0)
+
+
+def test_global_scope_aggregation_params_propagated():
+    """aggregation_params are passed to the aggregation callable."""
+    y_true, y_pred, y_train = _three_series_data()
+    # scaled_mean with scale=10 → 10 * mean(1.0, 0.0, 2.0) = 10.0
+    config = _global_metrics_config(
+        agg_callable=SCALED_MEAN,
+        aggregation_params={"scale": 10.0},
+    )
+    weights = {"A": 1.0, "B": 1.0, "C": 1.0}
+
+    result = evaluate_metrics(
+        y_true,
+        y_pred,
+        y_train,
+        config,
+        "fold_0",
+        fold_weights=weights,
+    )
+
+    assert result.iloc[0]["value"] == pytest.approx(10.0)
