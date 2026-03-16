@@ -313,19 +313,34 @@ def _group_metrics_config(
     )
 
 
-def test_group_scope_simple_metric():
-    """Group scope: RMSE computed on concatenated arrays within each group."""
+def _group_scope_result():
+    """Evaluate group-scope RMSE on _four_series_data; shared by multiple tests."""
     y_true, y_pred, y_train, grouping_df = _four_series_data()
     config = _group_metrics_config(grouping_columns=["category"])
-
-    result = evaluate_metrics(
+    return evaluate_metrics(
         y_true, y_pred, y_train, config, "fold_0", grouping_df=grouping_df
     )
 
+
+def test_group_scope_produces_row_per_group():
+    """Group scope emits one row per group."""
+    result = _group_scope_result()
+
     assert len(result) == 2
     assert set(result["unique_id"]) == {"cat1", "cat2"}
+
+
+def test_group_scope_output_metadata():
+    """Group scope rows have scope='group' and correct grouping_column_name."""
+    result = _group_scope_result()
+
     assert (result["scope"] == "group").all()
     assert (result["grouping_column_name"] == "category").all()
+
+
+def test_group_scope_simple_metric_values():
+    """Group-scope RMSE values match manual computation on concatenated arrays."""
+    result = _group_scope_result()
 
     cat1_val = result.loc[result["unique_id"] == "cat1", "value"].iloc[0]
     cat2_val = result.loc[result["unique_id"] == "cat2", "value"].iloc[0]
@@ -333,9 +348,39 @@ def test_group_scope_simple_metric():
     assert cat2_val == pytest.approx(np.sqrt(2.0))
 
 
-def test_group_scope_context_aware_metric():
-    """Group scope with context-aware metric: y_train filtered to group."""
-    y_true, y_pred, y_train, grouping_df = _four_series_data()
+def _four_series_data_different_scales():
+    """Like _four_series_data but with different training scales per group.
+
+    y_true and y_pred are identical to _four_series_data.
+    y_train differs: cat1 (A,B) has unit diffs, cat2 (C,D) has 10x diffs.
+
+    cat1 concat y_train: [0,1,2,3, 0,1,2,3]
+      diffs = [1,1,1,-3,1,1,1] → mean_sq = 15/7 → scale = sqrt(15/7)
+    cat2 concat y_train: [0,10,20,30, 0,10,20,30]
+      diffs = [10,10,10,-30,10,10,10] → mean_sq = 1500/7 → scale = sqrt(1500/7)
+
+    cat1 RMSSE = sqrt(0.5) / sqrt(15/7) = sqrt(7/30)
+    cat2 RMSSE = sqrt(2.0) / sqrt(1500/7) = sqrt(7/750)
+    """
+    y_true, y_pred, _, grouping_df = _four_series_data()
+    y_train = pd.DataFrame(
+        {
+            "unique_id": ["A"] * 4 + ["B"] * 4 + ["C"] * 4 + ["D"] * 4,
+            "ds": list(range(1, 5)) * 4,
+            "y": (
+                [0.0, 1.0, 2.0, 3.0]  # A: diffs = [1,1,1]
+                + [0.0, 1.0, 2.0, 3.0]  # B: diffs = [1,1,1]
+                + [0.0, 10.0, 20.0, 30.0]  # C: diffs = [10,10,10]
+                + [0.0, 10.0, 20.0, 30.0]  # D: diffs = [10,10,10]
+            ),
+        }
+    )
+    return y_true, y_pred, y_train, grouping_df
+
+
+def test_group_scope_context_aware_output_metadata():
+    """Group scope with context-aware metric has correct output metadata."""
+    y_true, y_pred, y_train, grouping_df = _four_series_data_different_scales()
     config = _group_metrics_config(
         grouping_columns=["category"], metric_type="context_aware"
     )
@@ -347,8 +392,25 @@ def test_group_scope_context_aware_metric():
     assert len(result) == 2
     assert set(result["unique_id"]) == {"cat1", "cat2"}
     assert (result["scope"] == "group").all()
-    # RMSSE values should be finite (y_train has unit diffs → scale=1)
-    assert np.isfinite(result["value"]).all()
+
+
+def test_group_scope_context_aware_metric_values():
+    """Group-scope RMSSE uses group-filtered y_train, producing different scales."""
+    y_true, y_pred, y_train, grouping_df = _four_series_data_different_scales()
+    config = _group_metrics_config(
+        grouping_columns=["category"], metric_type="context_aware"
+    )
+
+    result = evaluate_metrics(
+        y_true, y_pred, y_train, config, "fold_0", grouping_df=grouping_df
+    )
+
+    # cat1 RMSSE = sqrt(0.5) / sqrt(15/7) = sqrt(7/30)
+    # cat2 RMSSE = sqrt(2.0) / sqrt(1500/7) = sqrt(7/750)
+    cat1_val = result.loc[result["unique_id"] == "cat1", "value"].iloc[0]
+    cat2_val = result.loc[result["unique_id"] == "cat2", "value"].iloc[0]
+    assert cat1_val == pytest.approx(np.sqrt(7.0 / 30.0))
+    assert cat2_val == pytest.approx(np.sqrt(7.0 / 750.0))
 
 
 def test_group_scope_falls_back_to_top_level_grouping_columns():
@@ -364,8 +426,8 @@ def test_group_scope_falls_back_to_top_level_grouping_columns():
     assert (result["grouping_column_name"] == "category").all()
 
 
-def test_mixed_per_series_and_group_scope():
-    """Mixed scopes: per_series and group metrics in one call."""
+def test_mixed_scope_row_counts():
+    """Mixed per_series + group scope produces correct row counts."""
     y_true, y_pred, y_train, grouping_df = _four_series_data()
     config = MetricsConfig(
         definitions=[
@@ -390,9 +452,35 @@ def test_mixed_per_series_and_group_scope():
 
     per_series_rows = result[result["scope"] == "per_series"]
     group_rows = result[result["scope"] == "group"]
-
-    # 4 series for per_series metric, 2 groups for group metric
     assert len(per_series_rows) == 4
     assert len(group_rows) == 2
+
+
+def test_mixed_scope_identifiers():
+    """Mixed per_series + group scope produces correct identifiers per scope."""
+    y_true, y_pred, y_train, grouping_df = _four_series_data()
+    config = MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="rmse_series",
+                callable="tsbricks.blocks.metrics.rmse",
+                type="simple",
+            ),
+            MetricDefinitionConfig(
+                name="rmse_group",
+                callable="tsbricks.blocks.metrics.rmse",
+                type="simple",
+                scope="group",
+                grouping_columns=["category"],
+            ),
+        ],
+    )
+
+    result = evaluate_metrics(
+        y_true, y_pred, y_train, config, "fold_0", grouping_df=grouping_df
+    )
+
+    per_series_rows = result[result["scope"] == "per_series"]
+    group_rows = result[result["scope"] == "group"]
     assert set(per_series_rows["unique_id"]) == {"A", "B", "C", "D"}
     assert set(group_rows["unique_id"]) == {"cat1", "cat2"}
