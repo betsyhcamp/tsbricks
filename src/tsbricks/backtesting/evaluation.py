@@ -8,6 +8,31 @@ from tsbricks.backtesting.schema import MetricsConfig
 from tsbricks.runner._utils import dynamic_import
 
 
+def _resolve_params(
+    defn,
+    y_train: pd.DataFrame,
+    grouping_df: pd.DataFrame | None,
+) -> dict[str, dict]:
+    """Resolve static per_series_params and fold-dependent param_resolvers.
+
+    Returns a mapping ``{param_name: {unique_id: scalar}}``.
+    """
+    resolved: dict[str, dict] = {}
+
+    if defn.per_series_params:
+        for param_name, lookup in defn.per_series_params.items():
+            resolved[param_name] = lookup
+
+    if defn.param_resolvers:
+        for param_name, resolver_config in defn.param_resolvers.items():
+            resolver_fn = dynamic_import(resolver_config.callable)
+            resolver_kwargs = resolver_config.params or {}
+            result = resolver_fn(y_train, grouping_df=grouping_df, **resolver_kwargs)
+            resolved[param_name] = result
+
+    return resolved
+
+
 def _compute_per_series_values(
     defn,
     metric_fn,
@@ -16,6 +41,7 @@ def _compute_per_series_values(
     y_pred: pd.DataFrame,
     y_train: pd.DataFrame,
     unique_ids,
+    resolved_params: dict[str, dict] | None = None,
 ) -> dict[str, float]:
     """Compute per-series metric values and return as {unique_id: value} dict.
 
@@ -27,10 +53,17 @@ def _compute_per_series_values(
         y_pred_arr = y_pred.loc[y_pred["unique_id"] == uid, "ypred"].to_numpy()
         y_train_arr = y_train.loc[y_train["unique_id"] == uid, "y"].to_numpy()
 
+        per_uid_kwargs = {**kwargs}
+        if resolved_params:
+            for param_name, lookup in resolved_params.items():
+                per_uid_kwargs[param_name] = lookup.get(uid, None)
+
         if defn.type == "simple":
-            result = metric_fn(y_true_arr, y_pred_arr, **kwargs)
+            result = metric_fn(y_true_arr, y_pred_arr, **per_uid_kwargs)
         else:
-            result = metric_fn(y_true_arr, y_pred_arr, y_train=y_train_arr, **kwargs)
+            result = metric_fn(
+                y_true_arr, y_pred_arr, y_train=y_train_arr, **per_uid_kwargs
+            )
 
         values[uid] = result[0] if isinstance(result, tuple) else result
     return values
@@ -46,6 +79,7 @@ def _evaluate_global_scope(
     fold_id: str,
     fold_weights: dict[str, float] | None,
     rows: list[dict],
+    resolved_params: dict[str, dict] | None = None,
 ) -> None:
     """Compute a global-scope metric via two-stage aggregation.
 
@@ -62,7 +96,14 @@ def _evaluate_global_scope(
 
     unique_ids = y_pred["unique_id"].unique()
     per_series_values = _compute_per_series_values(
-        defn, metric_fn, kwargs, y_true, y_pred, y_train, unique_ids
+        defn,
+        metric_fn,
+        kwargs,
+        y_true,
+        y_pred,
+        y_train,
+        unique_ids,
+        resolved_params=resolved_params,
     )
 
     agg_fn = dynamic_import(defn.aggregation_callable)
@@ -95,6 +136,7 @@ def _evaluate_group_two_stage(
     fold_id: str,
     fold_weights: dict[str, float] | None,
     rows: list[dict],
+    resolved_params: dict[str, dict] | None = None,
 ) -> None:
     """Compute a group-scope metric via two-stage aggregation.
 
@@ -113,7 +155,14 @@ def _evaluate_group_two_stage(
 
     for group_label, uid_set in group_map.items():
         per_series_values = _compute_per_series_values(
-            defn, metric_fn, kwargs, y_true, y_pred, y_train, uid_set
+            defn,
+            metric_fn,
+            kwargs,
+            y_true,
+            y_pred,
+            y_train,
+            uid_set,
+            resolved_params=resolved_params,
         )
 
         group_weights = {
@@ -221,17 +270,24 @@ def evaluate_metrics(
     rows: list[dict] = []
 
     for defn, metric_fn, kwargs in resolved:
+        resolved_params = _resolve_params(defn, y_train, grouping_df)
+
         if defn.scope == "per_series":
             for uid in unique_ids:
                 y_true_arr = y_true.loc[y_true["unique_id"] == uid, "y"].to_numpy()
                 y_pred_arr = y_pred.loc[y_pred["unique_id"] == uid, "ypred"].to_numpy()
                 y_train_arr = y_train.loc[y_train["unique_id"] == uid, "y"].to_numpy()
 
+                per_uid_kwargs = {**kwargs}
+                if resolved_params:
+                    for param_name, lookup in resolved_params.items():
+                        per_uid_kwargs[param_name] = lookup.get(uid, None)
+
                 if defn.type == "simple":
-                    result = metric_fn(y_true_arr, y_pred_arr, **kwargs)
+                    result = metric_fn(y_true_arr, y_pred_arr, **per_uid_kwargs)
                 else:
                     result = metric_fn(
-                        y_true_arr, y_pred_arr, y_train=y_train_arr, **kwargs
+                        y_true_arr, y_pred_arr, y_train=y_train_arr, **per_uid_kwargs
                     )
 
                 value = result[0] if isinstance(result, tuple) else result
@@ -262,8 +318,16 @@ def evaluate_metrics(
                     fold_id,
                     fold_weights,
                     rows,
+                    resolved_params=resolved_params,
                 )
             else:
+                if defn.param_resolvers:
+                    raise ValueError(
+                        f"Metric '{defn.name}' has scope='group' without "
+                        f"aggregation_callable but defines param_resolvers. "
+                        f"Param resolvers require per-series computation "
+                        f"(use aggregation_callable for two-stage group metrics)."
+                    )
                 _evaluate_group_scope(
                     defn,
                     metric_fn,
@@ -288,6 +352,7 @@ def evaluate_metrics(
                 fold_id,
                 fold_weights,
                 rows,
+                resolved_params=resolved_params,
             )
 
     return pd.DataFrame(
