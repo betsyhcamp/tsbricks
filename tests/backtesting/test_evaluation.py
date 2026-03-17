@@ -488,8 +488,8 @@ def test_mixed_scope_identifiers():
 
 # ---- global scope ----
 
-UNWEIGHTED_MEAN = "tsbricks._testing.agg_callables.unweighted_mean"
-WEIGHTED_MEAN = "tsbricks._testing.agg_callables.weighted_mean"
+UNWEIGHTED_MEAN = "tsbricks.backtesting.aggregations.unweighted_mean"
+WEIGHTED_MEAN = "tsbricks.backtesting.aggregations.weighted_mean"
 
 
 def _three_series_data():
@@ -750,7 +750,7 @@ def test_group_two_stage_requires_fold_weights():
 
 # ---- global scope: context-aware and aggregation_params ----
 
-SCALED_MEAN = "tsbricks._testing.agg_callables.scaled_mean"
+SCALED_MEAN = "tsbricks.backtesting.aggregations.scaled_mean"
 
 
 def test_global_scope_context_aware_metric():
@@ -810,24 +810,27 @@ def test_global_scope_aggregation_params_propagated():
 
 # ---- param resolvers (Phase 5) ----
 
-CAPTURING_RMSE = "tsbricks._testing.capturing_metric.capturing_rmse"
 CONSTANT_RESOLVER = "tsbricks._testing.param_resolvers.constant_resolver"
-TRAINING_STD_RESOLVER = "tsbricks._testing.param_resolvers.training_std_resolver"
 GROUPING_AWARE_RESOLVER = "tsbricks._testing.param_resolvers.grouping_aware_resolver"
 
 
-def test_static_per_series_params():
-    """per_series_params delivers per-uid scalar kwargs to the metric callable."""
-    from tsbricks._testing import capturing_metric
+def _permissive_rmse(y_true, y_pred, **kwargs):
+    """RMSE that accepts (and ignores) extra kwargs for param resolver tests."""
+    return float(np.sqrt(np.mean((np.asarray(y_true) - np.asarray(y_pred)) ** 2)))
 
-    capturing_metric.captured_calls.clear()
+
+def test_static_per_series_params(mocker):
+    """per_series_params delivers per-uid scalar kwargs to the metric callable."""
+    mock_rmse = mocker.patch(
+        "tsbricks.blocks.metrics.rmse", side_effect=_permissive_rmse
+    )
 
     y_true, y_pred, y_train = _three_series_data()
     config = MetricsConfig(
         definitions=[
             MetricDefinitionConfig(
                 name="rmse_with_threshold",
-                callable=CAPTURING_RMSE,
+                callable="tsbricks.blocks.metrics.rmse",
                 type="simple",
                 per_series_params={"threshold": {"A": 10, "B": 20, "C": 30}},
             )
@@ -836,23 +839,23 @@ def test_static_per_series_params():
 
     evaluate_metrics(y_true, y_pred, y_train, config, "fold_0")
 
-    assert len(capturing_metric.captured_calls) == 3
-    thresholds = {c["threshold"] for c in capturing_metric.captured_calls}
+    assert mock_rmse.call_count == 3
+    thresholds = {c.kwargs["threshold"] for c in mock_rmse.call_args_list}
     assert thresholds == {10, 20, 30}
 
 
-def test_param_resolver_delivers_resolved_values():
+def test_param_resolver_delivers_resolved_values(mocker):
     """param_resolvers calls the resolver and delivers per-uid scalars."""
-    from tsbricks._testing import capturing_metric
-
-    capturing_metric.captured_calls.clear()
+    mock_rmse = mocker.patch(
+        "tsbricks.blocks.metrics.rmse", side_effect=_permissive_rmse
+    )
 
     y_true, y_pred, y_train = _three_series_data()
     config = MetricsConfig(
         definitions=[
             MetricDefinitionConfig(
                 name="rmse_with_scale",
-                callable=CAPTURING_RMSE,
+                callable="tsbricks.blocks.metrics.rmse",
                 type="simple",
                 param_resolvers={
                     "scale": {
@@ -866,13 +869,17 @@ def test_param_resolver_delivers_resolved_values():
 
     evaluate_metrics(y_true, y_pred, y_train, config, "fold_0")
 
-    assert len(capturing_metric.captured_calls) == 3
-    for call in capturing_metric.captured_calls:
-        assert call["scale"] == 99.0
+    assert mock_rmse.call_count == 3
+    for call in mock_rmse.call_args_list:
+        assert call.kwargs["scale"] == 99.0
 
 
-def test_resolver_receives_grouping_df():
+def test_resolver_receives_grouping_df(mocker):
     """Resolver callable receives grouping_df when provided."""
+    mock_rmse = mocker.patch(
+        "tsbricks.blocks.metrics.rmse", side_effect=_permissive_rmse
+    )
+
     y_true, y_pred, y_train = _three_series_data()
     grouping_df = pd.DataFrame(
         {"unique_id": ["A", "B", "C"], "category": ["x", "x", "y"]}
@@ -881,7 +888,7 @@ def test_resolver_receives_grouping_df():
         definitions=[
             MetricDefinitionConfig(
                 name="rmse_grouped_resolve",
-                callable=CAPTURING_RMSE,
+                callable="tsbricks.blocks.metrics.rmse",
                 type="simple",
                 param_resolvers={
                     "group_val": {"callable": GROUPING_AWARE_RESOLVER},
@@ -890,11 +897,15 @@ def test_resolver_receives_grouping_df():
         ],
     )
 
-    # Should not raise — grouping_df is provided
     result = evaluate_metrics(
         y_true, y_pred, y_train, config, "fold_0", grouping_df=grouping_df
     )
+
     assert len(result) == 3
+    # Verify resolver ran and delivered values to the metric
+    assert mock_rmse.call_count == 3
+    for call in mock_rmse.call_args_list:
+        assert call.kwargs["group_val"] == 42.0
 
 
 def test_resolver_without_grouping_df_raises():
@@ -904,7 +915,7 @@ def test_resolver_without_grouping_df_raises():
         definitions=[
             MetricDefinitionConfig(
                 name="rmse_grouped_resolve",
-                callable=CAPTURING_RMSE,
+                callable="tsbricks.blocks.metrics.rmse",
                 type="simple",
                 param_resolvers={
                     "group_val": {"callable": GROUPING_AWARE_RESOLVER},
@@ -919,18 +930,18 @@ def test_resolver_without_grouping_df_raises():
         evaluate_metrics(y_true, y_pred, y_train, config, "fold_0")
 
 
-def test_resolver_with_global_scope():
+def test_resolver_with_global_scope(mocker):
     """Resolvers run during stage 1 of global two-stage computation."""
-    from tsbricks._testing import capturing_metric
-
-    capturing_metric.captured_calls.clear()
+    mock_rmse = mocker.patch(
+        "tsbricks.blocks.metrics.rmse", side_effect=_permissive_rmse
+    )
 
     y_true, y_pred, y_train = _three_series_data()
     config = MetricsConfig(
         definitions=[
             MetricDefinitionConfig(
                 name="rmse_global_resolved",
-                callable=CAPTURING_RMSE,
+                callable="tsbricks.blocks.metrics.rmse",
                 type="simple",
                 scope="global",
                 aggregation_callable=UNWEIGHTED_MEAN,
@@ -951,9 +962,9 @@ def test_resolver_with_global_scope():
 
     assert len(result) == 1
     # Stage 1 computed per-series values, each call should have scale=7.0
-    assert len(capturing_metric.captured_calls) == 3
-    for call in capturing_metric.captured_calls:
-        assert call["scale"] == 7.0
+    assert mock_rmse.call_count == 3
+    for call in mock_rmse.call_args_list:
+        assert call.kwargs["scale"] == 7.0
 
 
 def test_resolver_with_group_concat_raises():
@@ -983,18 +994,18 @@ def test_resolver_with_group_concat_raises():
         )
 
 
-def test_static_and_resolver_params_combined():
+def test_static_and_resolver_params_combined(mocker):
     """per_series_params and param_resolvers can coexist on the same metric."""
-    from tsbricks._testing import capturing_metric
-
-    capturing_metric.captured_calls.clear()
+    mock_rmse = mocker.patch(
+        "tsbricks.blocks.metrics.rmse", side_effect=_permissive_rmse
+    )
 
     y_true, y_pred, y_train = _three_series_data()
     config = MetricsConfig(
         definitions=[
             MetricDefinitionConfig(
                 name="rmse_combined",
-                callable=CAPTURING_RMSE,
+                callable="tsbricks.blocks.metrics.rmse",
                 type="simple",
                 per_series_params={"threshold": {"A": 10, "B": 20, "C": 30}},
                 param_resolvers={
@@ -1009,9 +1020,9 @@ def test_static_and_resolver_params_combined():
 
     evaluate_metrics(y_true, y_pred, y_train, config, "fold_0")
 
-    assert len(capturing_metric.captured_calls) == 3
-    for call in capturing_metric.captured_calls:
-        assert "threshold" in call
-        assert call["scale"] == 5.0
-    thresholds = {c["threshold"] for c in capturing_metric.captured_calls}
+    assert mock_rmse.call_count == 3
+    for call in mock_rmse.call_args_list:
+        assert "threshold" in call.kwargs
+        assert call.kwargs["scale"] == 5.0
+    thresholds = {c.kwargs["threshold"] for c in mock_rmse.call_args_list}
     assert thresholds == {10, 20, 30}

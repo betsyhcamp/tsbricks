@@ -1,4 +1,8 @@
-"""Param resolver callables for testing Phase 5 resolver functionality."""
+"""Param resolver callables for testing resolver functionality.
+
+These must live in an importable package because ``dynamic_import()``
+resolves them by dotted path at runtime.
+"""
 
 from __future__ import annotations
 
@@ -14,19 +18,6 @@ def constant_resolver(
     """Return a constant value for every unique_id in y_train."""
     unique_ids = y_train["unique_id"].unique()
     return {uid: value for uid in unique_ids}
-
-
-def training_std_resolver(
-    y_train: pd.DataFrame,
-    grouping_df: pd.DataFrame | None = None,
-    **kwargs: object,
-) -> dict[str, float]:
-    """Return the standard deviation of each series' training data."""
-    result: dict[str, float] = {}
-    for uid in y_train["unique_id"].unique():
-        arr = y_train.loc[y_train["unique_id"] == uid, "y"].to_numpy()
-        result[uid] = float(arr.std())
-    return result
 
 
 def grouping_aware_resolver(
