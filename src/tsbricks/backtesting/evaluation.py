@@ -270,6 +270,18 @@ def evaluate_metrics(
     rows: list[dict] = []
 
     for defn, metric_fn, kwargs in resolved:
+        if (
+            defn.scope == "group"
+            and not defn.aggregation_callable
+            and defn.param_resolvers
+        ):
+            raise ValueError(
+                f"Metric '{defn.name}' has scope='group' without "
+                f"aggregation_callable but defines param_resolvers. "
+                f"Param resolvers require per-series computation "
+                f"(use aggregation_callable for two-stage group metrics)."
+            )
+
         resolved_params = _resolve_params(defn, y_train, grouping_df)
 
         if defn.scope == "per_series":
@@ -321,13 +333,6 @@ def evaluate_metrics(
                     resolved_params=resolved_params,
                 )
             else:
-                if defn.param_resolvers:
-                    raise ValueError(
-                        f"Metric '{defn.name}' has scope='group' without "
-                        f"aggregation_callable but defines param_resolvers. "
-                        f"Param resolvers require per-series computation "
-                        f"(use aggregation_callable for two-stage group metrics)."
-                    )
                 _evaluate_group_scope(
                     defn,
                     metric_fn,
