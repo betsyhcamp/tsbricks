@@ -25,6 +25,25 @@ def _resolve_params(
 
     if defn.param_resolvers:
         for param_name, resolver_config in defn.param_resolvers.items():
+            if resolver_config.grouping_columns:
+                if grouping_df is None:
+                    raise ValueError(
+                        f"Resolver for param '{param_name}' on metric "
+                        f"'{defn.name}' declares grouping_columns "
+                        f"{resolver_config.grouping_columns} but no "
+                        f"grouping_df was provided."
+                    )
+                missing = set(resolver_config.grouping_columns) - set(
+                    grouping_df.columns
+                )
+                if missing:
+                    raise ValueError(
+                        f"Resolver for param '{param_name}' on metric "
+                        f"'{defn.name}' references grouping_columns "
+                        f"{sorted(missing)} not found in grouping_df "
+                        f"(available: {sorted(grouping_df.columns)})."
+                    )
+
             resolver_fn = dynamic_import(resolver_config.callable)
             resolver_kwargs = resolver_config.params or {}
             result = resolver_fn(y_train, grouping_df=grouping_df, **resolver_kwargs)
