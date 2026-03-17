@@ -1016,6 +1016,87 @@ def test_per_series_params_with_group_concat_raises():
         )
 
 
+def test_resolver_grouping_columns_missing_grouping_df_raises():
+    """Resolver with grouping_columns raises when grouping_df is None."""
+    y_true, y_pred, y_train = _three_series_data()
+    config = MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="rmse_resolved",
+                callable="tsbricks.blocks.metrics.rmse",
+                type="simple",
+                param_resolvers={
+                    "scale": {
+                        "callable": CONSTANT_RESOLVER,
+                        "grouping_columns": ["category"],
+                    }
+                },
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="no grouping_df was provided"):
+        evaluate_metrics(y_true, y_pred, y_train, config, "fold_0")
+
+
+def test_resolver_grouping_columns_missing_column_raises():
+    """Resolver with grouping_columns raises when column is absent from grouping_df."""
+    y_true, y_pred, y_train = _three_series_data()
+    grouping_df = pd.DataFrame(
+        {"unique_id": ["A", "B", "C"], "category": ["x", "x", "y"]}
+    )
+    config = MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="rmse_resolved",
+                callable="tsbricks.blocks.metrics.rmse",
+                type="simple",
+                param_resolvers={
+                    "scale": {
+                        "callable": CONSTANT_RESOLVER,
+                        "grouping_columns": ["region"],
+                    }
+                },
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="region"):
+        evaluate_metrics(
+            y_true, y_pred, y_train, config, "fold_0", grouping_df=grouping_df
+        )
+
+
+def test_resolver_grouping_columns_valid_does_not_raise(mocker):
+    """Resolver with grouping_columns succeeds when columns exist in grouping_df."""
+    mocker.patch("tsbricks.blocks.metrics.rmse", side_effect=_permissive_rmse)
+
+    y_true, y_pred, y_train = _three_series_data()
+    grouping_df = pd.DataFrame(
+        {"unique_id": ["A", "B", "C"], "category": ["x", "x", "y"]}
+    )
+    config = MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="rmse_resolved",
+                callable="tsbricks.blocks.metrics.rmse",
+                type="simple",
+                param_resolvers={
+                    "scale": {
+                        "callable": CONSTANT_RESOLVER,
+                        "grouping_columns": ["category"],
+                    }
+                },
+            )
+        ],
+    )
+
+    result = evaluate_metrics(
+        y_true, y_pred, y_train, config, "fold_0", grouping_df=grouping_df
+    )
+    assert len(result) == 3
+
+
 def test_static_and_resolver_params_combined(mocker):
     """per_series_params and param_resolvers can coexist on the same metric."""
     mock_rmse = mocker.patch(
