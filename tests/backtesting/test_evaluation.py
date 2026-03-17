@@ -806,3 +806,212 @@ def test_global_scope_aggregation_params_propagated():
     )
 
     assert result.iloc[0]["value"] == pytest.approx(10.0)
+
+
+# ---- param resolvers (Phase 5) ----
+
+CAPTURING_RMSE = "tsbricks._testing.capturing_metric.capturing_rmse"
+CONSTANT_RESOLVER = "tsbricks._testing.param_resolvers.constant_resolver"
+TRAINING_STD_RESOLVER = "tsbricks._testing.param_resolvers.training_std_resolver"
+GROUPING_AWARE_RESOLVER = "tsbricks._testing.param_resolvers.grouping_aware_resolver"
+
+
+def test_static_per_series_params():
+    """per_series_params delivers per-uid scalar kwargs to the metric callable."""
+    from tsbricks._testing import capturing_metric
+
+    capturing_metric.captured_calls.clear()
+
+    y_true, y_pred, y_train = _three_series_data()
+    config = MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="rmse_with_threshold",
+                callable=CAPTURING_RMSE,
+                type="simple",
+                per_series_params={"threshold": {"A": 10, "B": 20, "C": 30}},
+            )
+        ],
+    )
+
+    evaluate_metrics(y_true, y_pred, y_train, config, "fold_0")
+
+    assert len(capturing_metric.captured_calls) == 3
+    thresholds = {c["threshold"] for c in capturing_metric.captured_calls}
+    assert thresholds == {10, 20, 30}
+
+
+def test_param_resolver_delivers_resolved_values():
+    """param_resolvers calls the resolver and delivers per-uid scalars."""
+    from tsbricks._testing import capturing_metric
+
+    capturing_metric.captured_calls.clear()
+
+    y_true, y_pred, y_train = _three_series_data()
+    config = MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="rmse_with_scale",
+                callable=CAPTURING_RMSE,
+                type="simple",
+                param_resolvers={
+                    "scale": {
+                        "callable": CONSTANT_RESOLVER,
+                        "params": {"value": 99.0},
+                    }
+                },
+            )
+        ],
+    )
+
+    evaluate_metrics(y_true, y_pred, y_train, config, "fold_0")
+
+    assert len(capturing_metric.captured_calls) == 3
+    for call in capturing_metric.captured_calls:
+        assert call["scale"] == 99.0
+
+
+def test_resolver_receives_grouping_df():
+    """Resolver callable receives grouping_df when provided."""
+    y_true, y_pred, y_train = _three_series_data()
+    grouping_df = pd.DataFrame(
+        {"unique_id": ["A", "B", "C"], "category": ["x", "x", "y"]}
+    )
+    config = MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="rmse_grouped_resolve",
+                callable=CAPTURING_RMSE,
+                type="simple",
+                param_resolvers={
+                    "group_val": {"callable": GROUPING_AWARE_RESOLVER},
+                },
+            )
+        ],
+    )
+
+    # Should not raise — grouping_df is provided
+    result = evaluate_metrics(
+        y_true, y_pred, y_train, config, "fold_0", grouping_df=grouping_df
+    )
+    assert len(result) == 3
+
+
+def test_resolver_without_grouping_df_raises():
+    """Resolver that requires grouping_df raises when grouping_df is None."""
+    y_true, y_pred, y_train = _three_series_data()
+    config = MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="rmse_grouped_resolve",
+                callable=CAPTURING_RMSE,
+                type="simple",
+                param_resolvers={
+                    "group_val": {"callable": GROUPING_AWARE_RESOLVER},
+                },
+            )
+        ],
+    )
+
+    with pytest.raises(
+        ValueError, match="grouping_aware_resolver requires grouping_df"
+    ):
+        evaluate_metrics(y_true, y_pred, y_train, config, "fold_0")
+
+
+def test_resolver_with_global_scope():
+    """Resolvers run during stage 1 of global two-stage computation."""
+    from tsbricks._testing import capturing_metric
+
+    capturing_metric.captured_calls.clear()
+
+    y_true, y_pred, y_train = _three_series_data()
+    config = MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="rmse_global_resolved",
+                callable=CAPTURING_RMSE,
+                type="simple",
+                scope="global",
+                aggregation_callable=UNWEIGHTED_MEAN,
+                param_resolvers={
+                    "scale": {
+                        "callable": CONSTANT_RESOLVER,
+                        "params": {"value": 7.0},
+                    }
+                },
+            )
+        ],
+    )
+    weights = {"A": 1.0, "B": 1.0, "C": 1.0}
+
+    result = evaluate_metrics(
+        y_true, y_pred, y_train, config, "fold_0", fold_weights=weights
+    )
+
+    assert len(result) == 1
+    # Stage 1 computed per-series values, each call should have scale=7.0
+    assert len(capturing_metric.captured_calls) == 3
+    for call in capturing_metric.captured_calls:
+        assert call["scale"] == 7.0
+
+
+def test_resolver_with_group_concat_raises():
+    """param_resolvers with group-concat (no aggregation_callable) raises ValueError."""
+    y_true, y_pred, y_train, grouping_df = _four_series_data()
+    config = MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="rmse_group_bad",
+                callable="tsbricks.blocks.metrics.rmse",
+                type="simple",
+                scope="group",
+                grouping_columns=["category"],
+                param_resolvers={
+                    "scale": {
+                        "callable": CONSTANT_RESOLVER,
+                        "params": {"value": 1.0},
+                    }
+                },
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="param_resolvers"):
+        evaluate_metrics(
+            y_true, y_pred, y_train, config, "fold_0", grouping_df=grouping_df
+        )
+
+
+def test_static_and_resolver_params_combined():
+    """per_series_params and param_resolvers can coexist on the same metric."""
+    from tsbricks._testing import capturing_metric
+
+    capturing_metric.captured_calls.clear()
+
+    y_true, y_pred, y_train = _three_series_data()
+    config = MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="rmse_combined",
+                callable=CAPTURING_RMSE,
+                type="simple",
+                per_series_params={"threshold": {"A": 10, "B": 20, "C": 30}},
+                param_resolvers={
+                    "scale": {
+                        "callable": CONSTANT_RESOLVER,
+                        "params": {"value": 5.0},
+                    }
+                },
+            )
+        ],
+    )
+
+    evaluate_metrics(y_true, y_pred, y_train, config, "fold_0")
+
+    assert len(capturing_metric.captured_calls) == 3
+    for call in capturing_metric.captured_calls:
+        assert "threshold" in call
+        assert call["scale"] == 5.0
+    thresholds = {c["threshold"] for c in capturing_metric.captured_calls}
+    assert thresholds == {10, 20, 30}
