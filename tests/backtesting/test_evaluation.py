@@ -994,6 +994,28 @@ def test_resolver_with_group_concat_raises():
         )
 
 
+def test_per_series_params_with_group_concat_raises():
+    """per_series_params with group-concat (no aggregation_callable) raises ValueError."""
+    y_true, y_pred, y_train, grouping_df = _four_series_data()
+    config = MetricsConfig(
+        definitions=[
+            MetricDefinitionConfig(
+                name="rmse_group_bad",
+                callable="tsbricks.blocks.metrics.rmse",
+                type="simple",
+                scope="group",
+                grouping_columns=["category"],
+                per_series_params={"threshold": {"A": 10, "B": 20, "C": 30, "D": 40}},
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="per_series_params"):
+        evaluate_metrics(
+            y_true, y_pred, y_train, config, "fold_0", grouping_df=grouping_df
+        )
+
+
 def test_static_and_resolver_params_combined(mocker):
     """per_series_params and param_resolvers can coexist on the same metric."""
     mock_rmse = mocker.patch(
