@@ -1,4 +1,4 @@
-"""Residual diagnostics plotting utilities for time series forecasting."""
+"""Diagnostics plotting utilities for time series forecasting."""
 
 from __future__ import annotations
 
@@ -226,6 +226,112 @@ def _validate_inputs(
         raise ValueError(f"width must be positive, got {width}.")
     if height <= 0:
         raise ValueError(f"height must be positive, got {height}.")
+
+
+def _validate_acf_pacf_inputs(
+    df: DataFrameLike,
+    time_col: str,
+    value_col: str,
+    backend: str,
+    width: int,
+    height: int,
+    alpha: float,
+    lags: int | None,
+) -> None:
+    """Validate inputs for plot_acf / plot_pacf.
+
+    Checks DataFrame type, column existence, dtypes, missing values,
+    duplicates, and parameter constraints. Converts Polars to pandas
+    internally before column-level checks.
+    """
+    from tsbricks.blocks.utils import _is_pandas_df, _is_polars_df
+
+    # --- DataFrame type ---
+    if not (_is_pandas_df(df) or _is_polars_df(df)):
+        raise TypeError(
+            f"df must be a pandas or Polars DataFrame, got {type(df).__name__}."
+        )
+
+    # Convert to pandas for uniform validation
+    pdf = _convert_to_pandas(df)
+
+    # --- Empty / too-small ---
+    if len(pdf) == 0:
+        raise ValueError("DataFrame must not be empty.")
+    if len(pdf) < 2:
+        raise ValueError(f"DataFrame must have at least 2 rows, got {len(pdf)}.")
+
+    # --- Column existence ---
+    for col_name, label in [(time_col, "time_col"), (value_col, "value_col")]:
+        if col_name not in pdf.columns:
+            raise ValueError(
+                f"{label} '{col_name}' not found in DataFrame. "
+                f"Available columns: {pdf.columns.tolist()}"
+            )
+
+    # --- time_col dtype: must be datetime-like or integer ---
+    time_dtype = pdf[time_col].dtype
+    is_datetime = pd.api.types.is_datetime64_any_dtype(time_dtype)
+    is_integer = pd.api.types.is_integer_dtype(time_dtype)
+    if not (is_datetime or is_integer):
+        raise ValueError(
+            f"time_col '{time_col}' must be datetime-like or integer dtype, "
+            f"got {time_dtype}."
+        )
+
+    # --- value_col dtype: must be numeric ---
+    if not pd.api.types.is_numeric_dtype(pdf[value_col].dtype):
+        raise ValueError(
+            f"value_col '{value_col}' must be numeric, got {pdf[value_col].dtype}."
+        )
+
+    # --- Missing values ---
+    time_na = pdf[time_col].isna().sum()
+    if time_na > 0:
+        raise ValueError(
+            f"time_col '{time_col}' contains {int(time_na)} missing value(s)."
+        )
+    value_na = pdf[value_col].isna().sum()
+    if value_na > 0:
+        raise ValueError(
+            f"value_col '{value_col}' contains {int(value_na)} missing value(s)."
+        )
+
+    # --- Duplicate time values ---
+    n_dups = pdf[time_col].duplicated().sum()
+    if n_dups > 0:
+        raise ValueError(
+            f"time_col '{time_col}' contains {int(n_dups)} duplicate value(s)."
+        )
+
+    # --- backend ---
+    if backend not in ("plotly", "matplotlib"):
+        raise ValueError(
+            f"Invalid backend '{backend}'. Must be 'plotly' or 'matplotlib'."
+        )
+
+    # --- width / height: strict integer type + positive ---
+    for param_name, param_val in [("width", width), ("height", height)]:
+        if isinstance(param_val, bool) or not isinstance(param_val, (int, np.integer)):
+            raise TypeError(
+                f"{param_name} must be a positive integer, "
+                f"got {type(param_val).__name__}."
+            )
+        if param_val <= 0:
+            raise ValueError(f"{param_name} must be positive, got {param_val}.")
+
+    # --- alpha: 0 < alpha < 1 ---
+    if not (0 < alpha < 1):
+        raise ValueError(f"alpha must be between 0 and 1 exclusive, got {alpha}.")
+
+    # --- lags: None or positive integer (not bool) ---
+    if lags is not None:
+        if isinstance(lags, bool) or not isinstance(lags, (int, np.integer)):
+            raise TypeError(
+                f"lags must be a positive integer or None, got {type(lags).__name__}."
+            )
+        if lags < 1:
+            raise ValueError(f"lags must be >= 1, got {lags}.")
 
 
 def _plot_matplotlib(

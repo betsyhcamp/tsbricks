@@ -18,6 +18,7 @@ from tsbricks.blocks.diagnostics import (
     _compute_diagnostics,
     _convert_to_pandas,
     _validate_inputs,
+    _validate_acf_pacf_inputs,
     _plot_matplotlib,
     _plot_plotly,
     plot_residual_diagnostics,
@@ -310,3 +311,335 @@ def test_plot_diagnostics_return_fig_false_none(diag_df, mocker):
         return_fig=False,
     )
     assert result is None
+
+
+# =====================================================================
+# _validate_acf_pacf_inputs
+# =====================================================================
+
+_DEFAULTS = dict(backend="plotly", width=800, height=450, alpha=0.05, lags=None)
+
+
+def test_validate_acf_pacf_happy_path_datetime(acf_df_datetime):
+    """Passes silently for valid datetime DataFrame."""
+    _validate_acf_pacf_inputs(acf_df_datetime, "time", "value", **_DEFAULTS)
+
+
+def test_validate_acf_pacf_happy_path_integer(acf_df_integer):
+    """Passes silently for valid integer-index DataFrame."""
+    _validate_acf_pacf_inputs(acf_df_integer, "time", "value", **_DEFAULTS)
+
+
+def test_validate_acf_pacf_polars_input():
+    """Accepts Polars DataFrame."""
+    pl = pytest.importorskip("polars")
+    df = pl.DataFrame({"time": [1, 2, 3, 4, 5], "value": [1.0, 2.0, 3.0, 4.0, 5.0]})
+    _validate_acf_pacf_inputs(df, "time", "value", **_DEFAULTS)
+
+
+def test_validate_acf_pacf_rejects_non_dataframe():
+    """Raises TypeError for non-DataFrame input."""
+    with pytest.raises(TypeError, match="pandas or Polars DataFrame"):
+        _validate_acf_pacf_inputs(
+            {"time": [1, 2], "value": [1.0, 2.0]},
+            "time",
+            "value",
+            **_DEFAULTS,
+        )
+
+
+def test_validate_acf_pacf_empty_df():
+    """Raises ValueError for empty DataFrame."""
+    df = pd.DataFrame(
+        {"time": pd.Series([], dtype="int64"), "value": pd.Series([], dtype="float64")}
+    )
+    with pytest.raises(ValueError, match="must not be empty"):
+        _validate_acf_pacf_inputs(df, "time", "value", **_DEFAULTS)
+
+
+def test_validate_acf_pacf_single_row():
+    """Raises ValueError for single-row DataFrame."""
+    df = pd.DataFrame({"time": [1], "value": [1.0]})
+    with pytest.raises(ValueError, match="at least 2 rows"):
+        _validate_acf_pacf_inputs(df, "time", "value", **_DEFAULTS)
+
+
+def test_validate_acf_pacf_missing_time_col(acf_df_integer):
+    """Raises ValueError when time_col not in DataFrame."""
+    with pytest.raises(ValueError, match="time_col 'missing'"):
+        _validate_acf_pacf_inputs(acf_df_integer, "missing", "value", **_DEFAULTS)
+
+
+def test_validate_acf_pacf_missing_value_col(acf_df_integer):
+    """Raises ValueError when value_col not in DataFrame."""
+    with pytest.raises(ValueError, match="value_col 'missing'"):
+        _validate_acf_pacf_inputs(acf_df_integer, "time", "missing", **_DEFAULTS)
+
+
+def test_validate_acf_pacf_time_col_float_dtype():
+    """Raises ValueError when time_col is float."""
+    df = pd.DataFrame({"time": [1.0, 2.0, 3.0], "value": [1.0, 2.0, 3.0]})
+    with pytest.raises(ValueError, match="datetime-like or integer dtype"):
+        _validate_acf_pacf_inputs(df, "time", "value", **_DEFAULTS)
+
+
+def test_validate_acf_pacf_time_col_string_dtype():
+    """Raises ValueError when time_col is string."""
+    df = pd.DataFrame({"time": ["a", "b", "c"], "value": [1.0, 2.0, 3.0]})
+    with pytest.raises(ValueError, match="datetime-like or integer dtype"):
+        _validate_acf_pacf_inputs(df, "time", "value", **_DEFAULTS)
+
+
+def test_validate_acf_pacf_value_col_non_numeric():
+    """Raises ValueError when value_col is non-numeric."""
+    df = pd.DataFrame({"time": [1, 2, 3], "value": ["a", "b", "c"]})
+    with pytest.raises(ValueError, match="must be numeric"):
+        _validate_acf_pacf_inputs(df, "time", "value", **_DEFAULTS)
+
+
+def test_validate_acf_pacf_missing_time_values():
+    """Raises ValueError when time_col has NaN."""
+    df = pd.DataFrame(
+        {
+            "time": pd.array([1, pd.NA, 3], dtype="Int64"),
+            "value": [1.0, 2.0, 3.0],
+        }
+    )
+    with pytest.raises(ValueError, match="missing value"):
+        _validate_acf_pacf_inputs(df, "time", "value", **_DEFAULTS)
+
+
+def test_validate_acf_pacf_missing_value_values():
+    """Raises ValueError when value_col has NaN."""
+    df = pd.DataFrame({"time": [1, 2, 3], "value": [1.0, np.nan, 3.0]})
+    with pytest.raises(ValueError, match="missing value"):
+        _validate_acf_pacf_inputs(df, "time", "value", **_DEFAULTS)
+
+
+def test_validate_acf_pacf_duplicate_time():
+    """Raises ValueError when time_col has duplicates."""
+    df = pd.DataFrame({"time": [1, 2, 2, 3], "value": [1.0, 2.0, 3.0, 4.0]})
+    with pytest.raises(ValueError, match="duplicate"):
+        _validate_acf_pacf_inputs(df, "time", "value", **_DEFAULTS)
+
+
+def test_validate_acf_pacf_invalid_backend(acf_df_integer):
+    """Raises ValueError for unsupported backend."""
+    with pytest.raises(ValueError, match="Invalid backend"):
+        _validate_acf_pacf_inputs(
+            acf_df_integer,
+            "time",
+            "value",
+            backend="seaborn",
+            width=800,
+            height=450,
+            alpha=0.05,
+            lags=None,
+        )
+
+
+def test_validate_acf_pacf_width_float_type(acf_df_integer):
+    """Raises TypeError when width is a float."""
+    with pytest.raises(TypeError, match="width must be a positive integer"):
+        _validate_acf_pacf_inputs(
+            acf_df_integer,
+            "time",
+            "value",
+            backend="plotly",
+            width=800.0,
+            height=450,
+            alpha=0.05,
+            lags=None,
+        )
+
+
+def test_validate_acf_pacf_height_float_type(acf_df_integer):
+    """Raises TypeError when height is a float."""
+    with pytest.raises(TypeError, match="height must be a positive integer"):
+        _validate_acf_pacf_inputs(
+            acf_df_integer,
+            "time",
+            "value",
+            backend="plotly",
+            width=800,
+            height=450.0,
+            alpha=0.05,
+            lags=None,
+        )
+
+
+def test_validate_acf_pacf_width_nonpositive(acf_df_integer):
+    """Raises ValueError when width is zero."""
+    with pytest.raises(ValueError, match="width must be positive"):
+        _validate_acf_pacf_inputs(
+            acf_df_integer,
+            "time",
+            "value",
+            backend="plotly",
+            width=0,
+            height=450,
+            alpha=0.05,
+            lags=None,
+        )
+
+
+def test_validate_acf_pacf_height_negative(acf_df_integer):
+    """Raises ValueError when height is negative."""
+    with pytest.raises(ValueError, match="height must be positive"):
+        _validate_acf_pacf_inputs(
+            acf_df_integer,
+            "time",
+            "value",
+            backend="plotly",
+            width=800,
+            height=-1,
+            alpha=0.05,
+            lags=None,
+        )
+
+
+def test_validate_acf_pacf_alpha_zero(acf_df_integer):
+    """Raises ValueError when alpha is 0."""
+    with pytest.raises(ValueError, match="alpha must be between 0 and 1"):
+        _validate_acf_pacf_inputs(
+            acf_df_integer,
+            "time",
+            "value",
+            backend="plotly",
+            width=800,
+            height=450,
+            alpha=0.0,
+            lags=None,
+        )
+
+
+def test_validate_acf_pacf_alpha_one(acf_df_integer):
+    """Raises ValueError when alpha is 1."""
+    with pytest.raises(ValueError, match="alpha must be between 0 and 1"):
+        _validate_acf_pacf_inputs(
+            acf_df_integer,
+            "time",
+            "value",
+            backend="plotly",
+            width=800,
+            height=450,
+            alpha=1.0,
+            lags=None,
+        )
+
+
+def test_validate_acf_pacf_lags_valid_integer(acf_df_integer):
+    """Passes for valid positive integer lags."""
+    _validate_acf_pacf_inputs(
+        acf_df_integer,
+        "time",
+        "value",
+        backend="plotly",
+        width=800,
+        height=450,
+        alpha=0.05,
+        lags=3,
+    )
+
+
+def test_validate_acf_pacf_lags_float_rejected(acf_df_integer):
+    """Raises TypeError when lags is a float."""
+    with pytest.raises(TypeError, match="lags must be a positive integer"):
+        _validate_acf_pacf_inputs(
+            acf_df_integer,
+            "time",
+            "value",
+            backend="plotly",
+            width=800,
+            height=450,
+            alpha=0.05,
+            lags=3.0,
+        )
+
+
+def test_validate_acf_pacf_lags_bool_rejected(acf_df_integer):
+    """Raises TypeError when lags is a bool."""
+    with pytest.raises(TypeError, match="lags must be a positive integer"):
+        _validate_acf_pacf_inputs(
+            acf_df_integer,
+            "time",
+            "value",
+            backend="plotly",
+            width=800,
+            height=450,
+            alpha=0.05,
+            lags=True,
+        )
+
+
+def test_validate_acf_pacf_lags_zero_rejected(acf_df_integer):
+    """Raises ValueError when lags is 0."""
+    with pytest.raises(ValueError, match="lags must be >= 1"):
+        _validate_acf_pacf_inputs(
+            acf_df_integer,
+            "time",
+            "value",
+            backend="plotly",
+            width=800,
+            height=450,
+            alpha=0.05,
+            lags=0,
+        )
+
+
+def test_validate_acf_pacf_lags_negative_rejected(acf_df_integer):
+    """Raises ValueError when lags is negative."""
+    with pytest.raises(ValueError, match="lags must be >= 1"):
+        _validate_acf_pacf_inputs(
+            acf_df_integer,
+            "time",
+            "value",
+            backend="plotly",
+            width=800,
+            height=450,
+            alpha=0.05,
+            lags=-1,
+        )
+
+
+def test_validate_acf_pacf_lags_numpy_integer(acf_df_integer):
+    """Accepts numpy integer for lags."""
+    _validate_acf_pacf_inputs(
+        acf_df_integer,
+        "time",
+        "value",
+        backend="plotly",
+        width=800,
+        height=450,
+        alpha=0.05,
+        lags=np.int64(3),
+    )
+
+
+def test_validate_acf_pacf_width_numpy_integer(acf_df_integer):
+    """Accepts numpy integer for width."""
+    _validate_acf_pacf_inputs(
+        acf_df_integer,
+        "time",
+        "value",
+        backend="plotly",
+        width=np.int64(800),
+        height=450,
+        alpha=0.05,
+        lags=None,
+    )
+
+
+def test_validate_acf_pacf_width_bool_rejected(acf_df_integer):
+    """Raises TypeError when width is a bool."""
+    with pytest.raises(TypeError, match="width must be a positive integer"):
+        _validate_acf_pacf_inputs(
+            acf_df_integer,
+            "time",
+            "value",
+            backend="plotly",
+            width=True,
+            height=450,
+            alpha=0.05,
+            lags=None,
+        )

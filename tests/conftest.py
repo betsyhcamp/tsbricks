@@ -332,6 +332,31 @@ def diag_df():
     )
 
 
+# ---- Fixtures for ACF/PACF plotting (diagnostics.py) -------
+@pytest.fixture
+def acf_df_datetime():
+    """DataFrame with datetime time_col for ACF/PACF tests."""
+    return pd.DataFrame(
+        {
+            "time": pd.to_datetime(
+                ["2020-01-01", "2020-01-02", "2020-01-03", "2020-01-04", "2020-01-05"]
+            ),
+            "value": [1.0, 2.5, 1.5, 3.0, 2.0],
+        }
+    )
+
+
+@pytest.fixture
+def acf_df_integer():
+    """DataFrame with integer time_col for ACF/PACF tests."""
+    return pd.DataFrame(
+        {
+            "time": [5, 3, 1, 4, 2],
+            "value": [1.0, 2.5, 1.5, 3.0, 2.0],
+        }
+    )
+
+
 @pytest.fixture
 def sample_diag_data():
     """Prebuilt ResidualDiagnostics for plot-layer tests."""
