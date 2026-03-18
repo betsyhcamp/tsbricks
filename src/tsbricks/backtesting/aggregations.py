@@ -1,4 +1,4 @@
-"""Aggregation callables for testing global and group two-stage scopes."""
+"""Aggregation callables for global and group two-stage metric scopes."""
 
 from __future__ import annotations
 
