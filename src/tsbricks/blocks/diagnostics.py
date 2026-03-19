@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from statsmodels.tsa.stattools import acf as _sm_acf, pacf as _sm_pacf
 
 if TYPE_CHECKING:
     import matplotlib.figure as mpl_fig
@@ -25,6 +26,25 @@ _COLOR_PRIMARY = "#1f77b4"
 _COLOR_SECONDARY = "#ff7f0e"
 _DPI = 100
 _LINEWIDTH_PRIMARY = 1
+
+
+@dataclass(frozen=True)
+class AcfResult:
+    """Precomputed ACF or PACF data for plotting.
+
+    All arrays have the same length and correspond element-wise.
+
+    Attributes:
+        lags: Integer lag indices (e.g. [0, 1, 2, ...] or [1, 2, ...]).
+        values: Correlation values at each lag.
+        ci_lower: Lower confidence-interval bound, centered at 0.
+        ci_upper: Upper confidence-interval bound, centered at 0.
+    """
+
+    lags: np.ndarray
+    values: np.ndarray
+    ci_lower: np.ndarray
+    ci_upper: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -56,7 +76,6 @@ def _compute_diagnostics(
 ) -> ResidualDiagnostics:
     """Compute all diagnostic values from input data."""
     from scipy.stats import gaussian_kde
-    from statsmodels.tsa.stattools import acf
 
     # Sort by time
     df = df.sort_values(by=time_col).reset_index(drop=True)
@@ -75,7 +94,7 @@ def _compute_diagnostics(
     n = len(residuals)
     if nlags is None:
         nlags = max(1, min(40, n // 4))  # Guard against n<4
-    acf_result = acf(
+    acf_result = _sm_acf(
         residuals, nlags=nlags, fft=True
     )  # result return type depends on args
     acf_values: np.ndarray = (
@@ -332,6 +351,132 @@ def _validate_acf_pacf_inputs(
             )
         if lags < 1:
             raise ValueError(f"lags must be >= 1, got {lags}.")
+
+
+def _compute_acf(
+    df: DataFrameLike,
+    time_col: str,
+    value_col: str,
+    *,
+    lags: int | None,
+    alpha: float,
+    adjusted: bool,
+    fft: bool,
+    bartlett_confint: bool,
+    zero: bool,
+) -> AcfResult:
+    """Compute ACF values and confidence intervals for plotting.
+
+    Sorts by *time_col*, extracts the 1-D series from *value_col*,
+    delegates to ``statsmodels.tsa.stattools.acf``, and centres the
+    returned confidence interval at zero.
+
+    Returns:
+        AcfResult with lag indices, correlation values, and CI bounds.
+    """
+    series = _prepare_series(df, time_col, value_col)
+
+    kwargs: dict = dict(
+        alpha=alpha,
+        adjusted=adjusted,
+        fft=fft,
+        bartlett_confint=bartlett_confint,
+    )
+    if lags is not None:
+        kwargs["nlags"] = lags
+
+    acf_values, confint = _sm_acf(series, **kwargs)
+
+    ci_lower, ci_upper = _center_confint(acf_values, confint)
+    lag_indices = np.arange(len(acf_values))
+
+    if not zero:
+        acf_values = acf_values[1:]
+        ci_lower = ci_lower[1:]
+        ci_upper = ci_upper[1:]
+        lag_indices = lag_indices[1:]
+
+    return AcfResult(
+        lags=lag_indices,
+        values=acf_values,
+        ci_lower=ci_lower,
+        ci_upper=ci_upper,
+    )
+
+
+def _compute_pacf(
+    df: DataFrameLike,
+    time_col: str,
+    value_col: str,
+    *,
+    lags: int | None,
+    alpha: float,
+    method: str | None,
+    zero: bool,
+) -> AcfResult:
+    """Compute PACF values and confidence intervals for plotting.
+
+    Sorts by *time_col*, extracts the 1-D series from *value_col*,
+    delegates to ``statsmodels.tsa.stattools.pacf``, and centres the
+    returned confidence interval at zero.
+
+    When *method* is ``None`` the ``method`` keyword is omitted from
+    the statsmodels call, so statsmodels applies its own current
+    default.
+
+    Returns:
+        AcfResult with lag indices, correlation values, and CI bounds.
+    """
+    series = _prepare_series(df, time_col, value_col)
+
+    kwargs: dict = dict(alpha=alpha)
+    if lags is not None:
+        kwargs["nlags"] = lags
+    if method is not None:
+        kwargs["method"] = method
+
+    pacf_values, confint = _sm_pacf(series, **kwargs)
+
+    ci_lower, ci_upper = _center_confint(pacf_values, confint)
+    lag_indices = np.arange(len(pacf_values))
+
+    if not zero:
+        pacf_values = pacf_values[1:]
+        ci_lower = ci_lower[1:]
+        ci_upper = ci_upper[1:]
+        lag_indices = lag_indices[1:]
+
+    return AcfResult(
+        lags=lag_indices,
+        values=pacf_values,
+        ci_lower=ci_lower,
+        ci_upper=ci_upper,
+    )
+
+
+def _prepare_series(
+    df: DataFrameLike,
+    time_col: str,
+    value_col: str,
+) -> np.ndarray:
+    """Sort by *time_col* and return the *value_col* as a 1-D numpy array."""
+    pdf = _convert_to_pandas(df)
+    pdf = pdf.sort_values(by=time_col).reset_index(drop=True)
+    return pdf[value_col].to_numpy(dtype=float)
+
+
+def _center_confint(
+    values: np.ndarray,
+    confint: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Centre a statsmodels confint array at zero.
+
+    statsmodels returns bounds centred on the correlation value.
+    Subtracting the value shifts the band to be symmetric around 0.
+    """
+    ci_lower = confint[:, 0] - values
+    ci_upper = confint[:, 1] - values
+    return ci_lower, ci_upper
 
 
 def _plot_matplotlib(
