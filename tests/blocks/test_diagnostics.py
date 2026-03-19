@@ -14,9 +14,14 @@ import pandas as pd
 import pytest
 
 from tsbricks.blocks.diagnostics import (
+    AcfResult,
     ResidualDiagnostics,
+    _center_confint,
+    _compute_acf,
     _compute_diagnostics,
+    _compute_pacf,
     _convert_to_pandas,
+    _prepare_series,
     _validate_inputs,
     _validate_acf_pacf_inputs,
     _plot_matplotlib,
@@ -643,3 +648,407 @@ def test_validate_acf_pacf_width_bool_rejected(acf_df_integer):
             alpha=0.05,
             lags=None,
         )
+
+
+# =====================================================================
+# _prepare_series
+# =====================================================================
+
+
+def test_prepare_series_sorts_and_extracts(acf_df_integer):
+    """Sorts by time_col and returns value_col as 1-D float array."""
+    result = _prepare_series(acf_df_integer, "time", "value")
+    # acf_df_integer has time=[5,3,1,4,2], value=[1.0,2.5,1.5,3.0,2.0]
+    # sorted by time -> [1,2,3,4,5] -> values [1.5, 2.0, 2.5, 3.0, 1.0]
+    expected = np.array([1.5, 2.0, 2.5, 3.0, 1.0])
+    np.testing.assert_array_equal(result, expected)
+    assert result.dtype == float
+
+
+def test_prepare_series_polars_input():
+    """Converts Polars DataFrame to pandas before extraction."""
+    pl = pytest.importorskip("polars")
+    df = pl.DataFrame({"t": [3, 1, 2], "v": [30.0, 10.0, 20.0]})
+    result = _prepare_series(df, "t", "v")
+    np.testing.assert_array_equal(result, [10.0, 20.0, 30.0])
+
+
+# =====================================================================
+# _center_confint
+# =====================================================================
+
+
+def test_center_confint_shifts_bounds():
+    """Subtracts correlation values to centre CI at zero."""
+    values = np.array([1.0, 0.5, -0.2])
+    # statsmodels returns confint centred on the value
+    confint = np.array(
+        [
+            [0.8, 1.2],
+            [0.3, 0.7],
+            [-0.4, 0.0],
+        ]
+    )
+    ci_lower, ci_upper = _center_confint(values, confint)
+    # lower = confint[:,0] - values, upper = confint[:,1] - values
+    np.testing.assert_allclose(ci_lower, [-0.2, -0.2, -0.2])
+    np.testing.assert_allclose(ci_upper, [0.2, 0.2, 0.2])
+
+
+def test_center_confint_varying_widths():
+    """Works with non-uniform CI widths (e.g. Bartlett formula)."""
+    values = np.array([1.0, 0.4])
+    confint = np.array(
+        [
+            [0.7, 1.3],  # width 0.6
+            [0.1, 0.7],  # width 0.6, different offset
+        ]
+    )
+    ci_lower, ci_upper = _center_confint(values, confint)
+    np.testing.assert_allclose(ci_lower, [-0.3, -0.3])
+    np.testing.assert_allclose(ci_upper, [0.3, 0.3])
+
+
+# =====================================================================
+# _compute_acf
+# =====================================================================
+
+# Shared kwargs for _compute_acf happy-path calls
+_ACF_DEFAULTS: dict = dict(
+    alpha=0.05,
+    adjusted=False,
+    fft=True,
+    bartlett_confint=True,
+    zero=True,
+)
+
+
+def test_compute_acf_returns_acf_result(acf_df_datetime):
+    """Returns an AcfResult with matching array lengths."""
+    result = _compute_acf(
+        acf_df_datetime,
+        "time",
+        "value",
+        lags=2,
+        **_ACF_DEFAULTS,
+    )
+    assert isinstance(result, AcfResult)
+    assert len(result.lags) == 3  # lags 0, 1, 2
+    assert len(result.values) == 3
+    assert len(result.ci_lower) == 3
+    assert len(result.ci_upper) == 3
+
+
+def test_compute_acf_lag_zero_is_one(acf_df_datetime):
+    """ACF at lag 0 is always 1.0."""
+    result = _compute_acf(
+        acf_df_datetime,
+        "time",
+        "value",
+        lags=2,
+        **_ACF_DEFAULTS,
+    )
+    assert result.values[0] == pytest.approx(1.0)
+
+
+def test_compute_acf_ci_centered_at_zero(acf_df_datetime):
+    """CI bounds are centred at zero, not at the ACF value."""
+    result = _compute_acf(
+        acf_df_datetime,
+        "time",
+        "value",
+        lags=2,
+        **_ACF_DEFAULTS,
+    )
+    # For each lag the midpoint of (ci_lower, ci_upper) should be ~0
+    midpoints = (result.ci_lower + result.ci_upper) / 2
+    np.testing.assert_allclose(midpoints, 0.0, atol=1e-10)
+
+
+def test_compute_acf_zero_false_slices(acf_df_datetime):
+    """zero=False removes lag 0 from all arrays."""
+    result = _compute_acf(
+        acf_df_datetime,
+        "time",
+        "value",
+        lags=2,
+        zero=False,
+        alpha=0.05,
+        adjusted=False,
+        fft=True,
+        bartlett_confint=True,
+    )
+    assert result.lags[0] == 1
+    assert 0 not in result.lags
+    assert len(result.values) == 2  # lags 1, 2 only
+
+
+def test_compute_acf_zero_true_includes_lag_zero(acf_df_datetime):
+    """zero=True keeps lag 0."""
+    result = _compute_acf(
+        acf_df_datetime,
+        "time",
+        "value",
+        lags=2,
+        **_ACF_DEFAULTS,
+    )
+    assert result.lags[0] == 0
+
+
+def test_compute_acf_lags_none_uses_statsmodels_default(acf_df_datetime):
+    """lags=None delegates default nlags to statsmodels."""
+    result = _compute_acf(
+        acf_df_datetime,
+        "time",
+        "value",
+        lags=None,
+        **_ACF_DEFAULTS,
+    )
+    # statsmodels default nlags for n=5 is min(10*(log10(5)),4) ~ 4
+    # Just verify it returns something reasonable (> 0 lags)
+    assert len(result.values) > 1
+
+
+def test_compute_acf_explicit_lags(acf_df_datetime):
+    """Explicit integer lags controls number of lags returned."""
+    result = _compute_acf(
+        acf_df_datetime,
+        "time",
+        "value",
+        lags=1,
+        **_ACF_DEFAULTS,
+    )
+    assert len(result.values) == 2  # lag 0 + lag 1
+
+
+def test_compute_acf_sorts_unsorted_input(acf_df_integer):
+    """Produces identical results regardless of input row order."""
+    result_unsorted = _compute_acf(
+        acf_df_integer,
+        "time",
+        "value",
+        lags=2,
+        **_ACF_DEFAULTS,
+    )
+    # Build a pre-sorted copy
+    df_sorted = acf_df_integer.sort_values("time").reset_index(drop=True)
+    result_sorted = _compute_acf(
+        df_sorted,
+        "time",
+        "value",
+        lags=2,
+        **_ACF_DEFAULTS,
+    )
+    np.testing.assert_array_equal(result_unsorted.values, result_sorted.values)
+
+
+def test_compute_acf_adjusted_passthrough(acf_df_datetime):
+    """adjusted=True changes ACF values (uses n-k denominator)."""
+    result_default = _compute_acf(
+        acf_df_datetime,
+        "time",
+        "value",
+        lags=2,
+        alpha=0.05,
+        adjusted=False,
+        fft=True,
+        bartlett_confint=True,
+        zero=True,
+    )
+    result_adjusted = _compute_acf(
+        acf_df_datetime,
+        "time",
+        "value",
+        lags=2,
+        alpha=0.05,
+        adjusted=True,
+        fft=True,
+        bartlett_confint=True,
+        zero=True,
+    )
+    # Lag 0 is always 1.0 for both, but lag 1+ should differ
+    assert not np.allclose(result_default.values[1:], result_adjusted.values[1:])
+
+
+def test_compute_acf_bartlett_false_gives_flat_ci(acf_df_datetime):
+    """bartlett_confint=False produces constant CI width across lags."""
+    result = _compute_acf(
+        acf_df_datetime,
+        "time",
+        "value",
+        lags=3,
+        alpha=0.05,
+        adjusted=False,
+        fft=True,
+        bartlett_confint=False,
+        zero=True,
+    )
+    widths = result.ci_upper - result.ci_lower
+    # With bartlett_confint=False the CI width should be the same
+    np.testing.assert_allclose(widths, widths[0])
+
+
+# =====================================================================
+# _compute_pacf
+# =====================================================================
+
+# Shared kwargs for _compute_pacf happy-path calls
+_PACF_DEFAULTS: dict = dict(
+    alpha=0.05,
+    method=None,
+    zero=True,
+)
+
+
+def test_compute_pacf_returns_acf_result(acf_df_datetime):
+    """Returns an AcfResult with matching array lengths."""
+    result = _compute_pacf(
+        acf_df_datetime,
+        "time",
+        "value",
+        lags=2,
+        **_PACF_DEFAULTS,
+    )
+    assert isinstance(result, AcfResult)
+    assert len(result.lags) == 3
+    assert len(result.values) == 3
+    assert len(result.ci_lower) == 3
+    assert len(result.ci_upper) == 3
+
+
+def test_compute_pacf_lag_zero_is_one(acf_df_datetime):
+    """PACF at lag 0 is always 1.0."""
+    result = _compute_pacf(
+        acf_df_datetime,
+        "time",
+        "value",
+        lags=2,
+        **_PACF_DEFAULTS,
+    )
+    assert result.values[0] == pytest.approx(1.0)
+
+
+def test_compute_pacf_ci_centered_at_zero(acf_df_datetime):
+    """CI bounds are centred at zero."""
+    result = _compute_pacf(
+        acf_df_datetime,
+        "time",
+        "value",
+        lags=2,
+        **_PACF_DEFAULTS,
+    )
+    midpoints = (result.ci_lower + result.ci_upper) / 2
+    np.testing.assert_allclose(midpoints, 0.0, atol=1e-10)
+
+
+def test_compute_pacf_zero_false_slices(acf_df_datetime):
+    """zero=False removes lag 0 from all arrays."""
+    result = _compute_pacf(
+        acf_df_datetime,
+        "time",
+        "value",
+        lags=2,
+        alpha=0.05,
+        method=None,
+        zero=False,
+    )
+    assert result.lags[0] == 1
+    assert 0 not in result.lags
+    assert len(result.values) == 2
+
+
+def test_compute_pacf_lags_none_uses_statsmodels_default(acf_df_datetime):
+    """lags=None delegates default nlags to statsmodels."""
+    result = _compute_pacf(
+        acf_df_datetime,
+        "time",
+        "value",
+        lags=None,
+        **_PACF_DEFAULTS,
+    )
+    assert len(result.values) > 1
+
+
+def test_compute_pacf_explicit_lags(acf_df_datetime):
+    """Explicit integer lags controls number of lags returned."""
+    result = _compute_pacf(
+        acf_df_datetime,
+        "time",
+        "value",
+        lags=1,
+        **_PACF_DEFAULTS,
+    )
+    assert len(result.values) == 2  # lag 0 + lag 1
+
+
+def test_compute_pacf_method_none_omits_kwarg(acf_df_datetime, mocker):
+    """method=None does not pass method to statsmodels pacf."""
+    mock_pacf = mocker.patch(
+        "tsbricks.blocks.diagnostics._sm_pacf",
+    )
+    # Set up return: pacf returns (values, confint) when alpha given
+    n = 3  # nlags=2 -> 3 values
+    mock_pacf.return_value = (
+        np.ones(n),
+        np.column_stack([np.zeros(n), 2 * np.ones(n)]),
+    )
+    _compute_pacf(
+        acf_df_datetime,
+        "time",
+        "value",
+        lags=2,
+        alpha=0.05,
+        method=None,
+        zero=True,
+    )
+    call_kwargs = mock_pacf.call_args[1]
+    assert "method" not in call_kwargs
+
+
+def test_compute_pacf_method_explicit_passes_through(
+    acf_df_datetime,
+    mocker,
+):
+    """Explicit method string is forwarded to statsmodels pacf."""
+    mock_pacf = mocker.patch(
+        "tsbricks.blocks.diagnostics._sm_pacf",
+    )
+    n = 3
+    mock_pacf.return_value = (
+        np.ones(n),
+        np.column_stack([np.zeros(n), 2 * np.ones(n)]),
+    )
+    _compute_pacf(
+        acf_df_datetime,
+        "time",
+        "value",
+        lags=2,
+        alpha=0.05,
+        method="ywmle",
+        zero=True,
+    )
+    call_kwargs = mock_pacf.call_args[1]
+    assert call_kwargs["method"] == "ywmle"
+
+
+def test_compute_pacf_sorts_unsorted_input(acf_df_integer):
+    """Produces identical results regardless of input row order."""
+    result_unsorted = _compute_pacf(
+        acf_df_integer,
+        "time",
+        "value",
+        lags=2,
+        **_PACF_DEFAULTS,
+    )
+    df_sorted = acf_df_integer.sort_values("time").reset_index(drop=True)
+    result_sorted = _compute_pacf(
+        df_sorted,
+        "time",
+        "value",
+        lags=2,
+        **_PACF_DEFAULTS,
+    )
+    np.testing.assert_array_equal(
+        result_unsorted.values,
+        result_sorted.values,
+    )
