@@ -448,10 +448,16 @@ def _validate_acf_pacf_inputs(
     is_datetime = pd.api.types.is_datetime64_any_dtype(time_dtype)
     is_integer = pd.api.types.is_integer_dtype(time_dtype)
     if not (is_datetime or is_integer):
-        raise ValueError(
-            f"time_col '{time_col}' must be datetime-like or integer dtype, "
-            f"got {time_dtype}."
-        )
+        # Object columns may hold Python datetime objects (e.g. from databases
+        # or timezone-aware datetimes stored as object dtype).  Use pandas
+        # value-level inference to accept these while still rejecting strings,
+        # categoricals, and other non-datetime object columns.
+        inferred = pd.api.types.infer_dtype(pdf[time_col], skipna=True)
+        if inferred not in ("datetime", "datetime64", "date"):
+            raise ValueError(
+                f"time_col '{time_col}' must be datetime-like or integer dtype, "
+                f"got {time_dtype}."
+            )
 
     # --- value_col dtype: must be real numeric (not complex) ---
     value_dtype = pdf[value_col].dtype
