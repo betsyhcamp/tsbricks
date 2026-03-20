@@ -402,6 +402,13 @@ def test_validate_acf_pacf_value_col_non_numeric():
         _validate_acf_pacf_inputs(df, "time", "value", **_DEFAULTS)
 
 
+def test_validate_acf_pacf_value_col_complex_rejected():
+    """Raises ValueError when value_col is complex dtype."""
+    df = pd.DataFrame({"time": [1, 2, 3], "value": [1 + 2j, 3 + 4j, 5 + 6j]})
+    with pytest.raises(ValueError, match="must be numeric"):
+        _validate_acf_pacf_inputs(df, "time", "value", **_DEFAULTS)
+
+
 def test_validate_acf_pacf_missing_time_values():
     """Raises ValueError when time_col has NaN."""
     df = pd.DataFrame(
