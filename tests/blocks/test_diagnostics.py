@@ -21,6 +21,8 @@ from tsbricks.blocks.diagnostics import (
     _compute_diagnostics,
     _compute_pacf,
     _convert_to_pandas,
+    _plot_acf_pacf_matplotlib,
+    _plot_acf_pacf_plotly,
     _prepare_series,
     _validate_inputs,
     _validate_acf_pacf_inputs,
@@ -1059,3 +1061,119 @@ def test_compute_pacf_sorts_unsorted_input(acf_df_integer):
         result_unsorted.values,
         result_sorted.values,
     )
+
+
+# =====================================================================
+# _plot_acf_pacf_matplotlib
+# =====================================================================
+
+
+def test_plot_acf_pacf_matplotlib_returns_figure(acf_result):
+    """Returns a matplotlib Figure with a single Axes."""
+    pytest.importorskip("matplotlib")
+    import matplotlib.figure as mpl_fig
+    import matplotlib.pyplot as plt
+
+    fig = _plot_acf_pacf_matplotlib(acf_result, ylabel="acf", width=800, height=450)
+    assert isinstance(fig, mpl_fig.Figure)
+    assert len(fig.axes) == 1
+    plt.close(fig)
+
+
+def test_plot_acf_pacf_matplotlib_dimensions(acf_result):
+    """Figure size matches width/height converted through DPI."""
+    pytest.importorskip("matplotlib")
+    import matplotlib.pyplot as plt
+
+    fig = _plot_acf_pacf_matplotlib(acf_result, ylabel="acf", width=1000, height=500)
+    w, h = fig.get_size_inches()
+    assert w == pytest.approx(10.0)
+    assert h == pytest.approx(5.0)
+    plt.close(fig)
+
+
+def test_plot_acf_pacf_matplotlib_labels(acf_result):
+    """Axes labels are 'lag' and the provided ylabel; no title."""
+    pytest.importorskip("matplotlib")
+    import matplotlib.pyplot as plt
+
+    fig = _plot_acf_pacf_matplotlib(acf_result, ylabel="pacf", width=800, height=450)
+    ax = fig.axes[0]
+    assert ax.get_xlabel() == "lag"
+    assert ax.get_ylabel() == "pacf"
+    assert ax.get_title() == ""
+    plt.close(fig)
+
+
+def test_plot_acf_pacf_matplotlib_has_zero_line(acf_result):
+    """A horizontal line at y=0 is present."""
+    pytest.importorskip("matplotlib")
+    import matplotlib.pyplot as plt
+
+    fig = _plot_acf_pacf_matplotlib(acf_result, ylabel="acf", width=800, height=450)
+    ax = fig.axes[0]
+    hlines = [line for line in ax.get_lines() if line.get_ydata()[0] == 0]
+    assert len(hlines) >= 1
+    plt.close(fig)
+
+
+def test_plot_acf_pacf_matplotlib_spines_black(acf_result):
+    """All spines are black."""
+    pytest.importorskip("matplotlib")
+    import matplotlib.pyplot as plt
+
+    fig = _plot_acf_pacf_matplotlib(acf_result, ylabel="acf", width=800, height=450)
+    ax = fig.axes[0]
+    for spine in ax.spines.values():
+        assert spine.get_edgecolor()[:3] == (0.0, 0.0, 0.0)
+    plt.close(fig)
+
+
+# =====================================================================
+# _plot_acf_pacf_plotly
+# =====================================================================
+
+
+def test_plot_acf_pacf_plotly_returns_figure(acf_result):
+    """Returns a plotly Figure with data traces."""
+    import plotly.graph_objects as go
+
+    fig = _plot_acf_pacf_plotly(acf_result, ylabel="acf", width=800, height=450)
+    assert isinstance(fig, go.Figure)
+    assert len(fig.data) > 0
+
+
+def test_plot_acf_pacf_plotly_dimensions(acf_result):
+    """Layout width/height match the requested pixel dimensions."""
+    fig = _plot_acf_pacf_plotly(acf_result, ylabel="acf", width=900, height=500)
+    assert fig.layout.width == 900
+    assert fig.layout.height == 500
+
+
+def test_plot_acf_pacf_plotly_labels(acf_result):
+    """Axis labels are 'lag' and the provided ylabel; no title."""
+    fig = _plot_acf_pacf_plotly(acf_result, ylabel="pacf", width=800, height=450)
+    assert fig.layout.xaxis.title.text == "lag"
+    assert fig.layout.yaxis.title.text == "pacf"
+    assert fig.layout.title is None or fig.layout.title.text is None
+
+
+def test_plot_acf_pacf_plotly_no_legend(acf_result):
+    """Legend is hidden."""
+    fig = _plot_acf_pacf_plotly(acf_result, ylabel="acf", width=800, height=450)
+    assert fig.layout.showlegend is False
+
+
+def test_plot_acf_pacf_plotly_has_ci_band(acf_result):
+    """First trace is a filled scatter for the confidence band."""
+    fig = _plot_acf_pacf_plotly(acf_result, ylabel="acf", width=800, height=450)
+    ci_trace = fig.data[0]
+    assert ci_trace.fill == "toself"
+
+
+def test_plot_acf_pacf_plotly_stem_count_matches_lags(acf_result):
+    """One stem trace per lag (between CI band trace and marker trace)."""
+    fig = _plot_acf_pacf_plotly(acf_result, ylabel="acf", width=800, height=450)
+    n_lags = len(acf_result.lags)
+    # traces: 1 CI band + n_lags stems + 1 markers = n_lags + 2
+    assert len(fig.data) == n_lags + 2
