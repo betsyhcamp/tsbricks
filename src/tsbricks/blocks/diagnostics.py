@@ -1,4 +1,4 @@
-"""Residual diagnostics plotting utilities for time series forecasting."""
+"""Diagnostics plotting utilities for time series forecasting."""
 
 from __future__ import annotations
 
@@ -7,6 +7,9 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from statsmodels.tsa.stattools import acf as _sm_acf, pacf as _sm_pacf
+
+from tsbricks.blocks.utils import convert_to_pandas
 
 if TYPE_CHECKING:
     import matplotlib.figure as mpl_fig
@@ -25,6 +28,25 @@ _COLOR_PRIMARY = "#1f77b4"
 _COLOR_SECONDARY = "#ff7f0e"
 _DPI = 100
 _LINEWIDTH_PRIMARY = 1
+
+
+@dataclass(frozen=True)
+class AcfResult:
+    """Precomputed ACF or PACF data for plotting.
+
+    All arrays have the same length and correspond element-wise.
+
+    Attributes:
+        lags: Integer lag indices (e.g. [0, 1, 2, ...] or [1, 2, ...]).
+        values: Correlation values at each lag.
+        ci_lower: Lower confidence-interval bound, centered at 0.
+        ci_upper: Upper confidence-interval bound, centered at 0.
+    """
+
+    lags: np.ndarray
+    values: np.ndarray
+    ci_lower: np.ndarray
+    ci_upper: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -47,7 +69,7 @@ class ResidualDiagnostics:
     kde_y: np.ndarray
 
 
-def _compute_diagnostics(
+def _compute_residual_diagnostics(
     df: pd.DataFrame,
     time_col: str,
     actual_col: str,
@@ -56,7 +78,6 @@ def _compute_diagnostics(
 ) -> ResidualDiagnostics:
     """Compute all diagnostic values from input data."""
     from scipy.stats import gaussian_kde
-    from statsmodels.tsa.stattools import acf
 
     # Sort by time
     df = df.sort_values(by=time_col).reset_index(drop=True)
@@ -75,7 +96,7 @@ def _compute_diagnostics(
     n = len(residuals)
     if nlags is None:
         nlags = max(1, min(40, n // 4))  # Guard against n<4
-    acf_result = acf(
+    acf_result = _sm_acf(
         residuals, nlags=nlags, fft=True
     )  # result return type depends on args
     acf_values: np.ndarray = (
@@ -142,12 +163,16 @@ def plot_residual_diagnostics(
             or if invalid parameters are provided.
     """
     # Convert polars to pandas if needed
-    df = _convert_to_pandas(df)
+    df = convert_to_pandas(df)
 
     # Validate inputs
-    _validate_inputs(df, time_col, actual_col, fitted_col, backend, width, height)
+    _validate_residual_inputs(
+        df, time_col, actual_col, fitted_col, backend, width, height
+    )
 
-    diagnostics_data = _compute_diagnostics(df, time_col, actual_col, fitted_col, nlags)
+    diagnostics_data = _compute_residual_diagnostics(
+        df, time_col, actual_col, fitted_col, nlags
+    )
 
     # Dispatch to backend
     if backend == "matplotlib":
@@ -176,14 +201,162 @@ def plot_residual_diagnostics(
         return None
 
 
-def _convert_to_pandas(df: DataFrameLike) -> pd.DataFrame:
-    """Convert polars DataFrame to pandas if needed."""
-    if isinstance(df, pd.DataFrame):
-        return df
-    return df.to_pandas()
+def plot_acf(
+    df: DataFrameLike,
+    time_col: str,
+    value_col: str,
+    lags: int | None = None,
+    alpha: float = 0.05,
+    adjusted: bool = False,
+    fft: bool = True,
+    bartlett_confint: bool = True,
+    zero: bool = True,
+    backend: Literal["plotly", "matplotlib"] = "plotly",
+    width: int = 800,
+    height: int = 450,
+    return_fig: bool = False,
+) -> FigureLike | None:
+    """Plot the autocorrelation function (ACF) for a single time series.
+
+    Wraps ``statsmodels.tsa.stattools.acf`` and renders a lollipop-style
+    ACF plot with a confidence interval band centred at zero.
+
+    Args:
+        df: DataFrame containing the time series (pandas or Polars).
+        time_col: Column name for the time/order index.
+        value_col: Column name for the numeric series to analyse.
+        lags: Number of lags. *None* follows the statsmodels default.
+        alpha: Significance level for the confidence interval.
+        adjusted: If *True*, compute the denominator-adjusted ACF.
+        fft: If *True*, compute ACF via FFT.
+        bartlett_confint: If *True*, use Bartlett's formula for CI widths.
+        zero: If *True*, include lag 0 in the plot.
+        backend: ``"plotly"`` or ``"matplotlib"``.
+        width: Figure width in pixels.
+        height: Figure height in pixels.
+        return_fig: If *True*, return the figure without rendering.
+
+    Returns:
+        *None* when *return_fig* is *False* (renders immediately),
+        otherwise the native backend figure object.
+    """
+    _validate_acf_pacf_inputs(
+        df,
+        time_col,
+        value_col,
+        backend,
+        width,
+        height,
+        alpha,
+        lags,
+    )
+
+    result = _compute_acf(
+        df,
+        time_col,
+        value_col,
+        lags=lags,
+        alpha=alpha,
+        adjusted=adjusted,
+        fft=fft,
+        bartlett_confint=bartlett_confint,
+        zero=zero,
+    )
+
+    if backend == "matplotlib":
+        fig = _plot_acf_pacf_matplotlib(
+            result, ylabel="acf", width=width, height=height
+        )
+        if return_fig:
+            return fig
+        import matplotlib.pyplot as plt
+
+        plt.show()
+        return None
+    else:
+        fig = _plot_acf_pacf_plotly(result, ylabel="acf", width=width, height=height)
+        if return_fig:
+            return fig
+        fig.show()
+        return None
 
 
-def _validate_inputs(
+def plot_pacf(
+    df: DataFrameLike,
+    time_col: str,
+    value_col: str,
+    lags: int | None = None,
+    alpha: float = 0.05,
+    method: str | None = None,
+    zero: bool = True,
+    backend: Literal["plotly", "matplotlib"] = "plotly",
+    width: int = 800,
+    height: int = 450,
+    return_fig: bool = False,
+) -> FigureLike | None:
+    """Plot the partial autocorrelation function (PACF) for a single time series.
+
+    Wraps ``statsmodels.tsa.stattools.pacf`` and renders a lollipop-style
+    PACF plot with a confidence interval band centred at zero.
+
+    Args:
+        df: DataFrame containing the time series (pandas or Polars).
+        time_col: Column name for the time/order index.
+        value_col: Column name for the numeric series to analyse.
+        lags: Number of lags. *None* follows the statsmodels default.
+        alpha: Significance level for the confidence interval.
+        method: PACF estimation method. *None* defers to the statsmodels
+            default for ``pacf(method=...)``.
+        zero: If *True*, include lag 0 in the plot.
+        backend: ``"plotly"`` or ``"matplotlib"``.
+        width: Figure width in pixels.
+        height: Figure height in pixels.
+        return_fig: If *True*, return the figure without rendering.
+
+    Returns:
+        *None* when *return_fig* is *False* (renders immediately),
+        otherwise the native backend figure object.
+    """
+    _validate_acf_pacf_inputs(
+        df,
+        time_col,
+        value_col,
+        backend,
+        width,
+        height,
+        alpha,
+        lags,
+    )
+
+    result = _compute_pacf(
+        df,
+        time_col,
+        value_col,
+        lags=lags,
+        alpha=alpha,
+        method=method,
+        zero=zero,
+    )
+
+    if backend == "matplotlib":
+        fig = _plot_acf_pacf_matplotlib(
+            result, ylabel="pacf", width=width, height=height
+        )
+        if return_fig:
+            return fig
+        import matplotlib.pyplot as plt
+
+        plt.show()
+        return None
+    else:
+        fig = _plot_acf_pacf_plotly(result, ylabel="pacf", width=width, height=height)
+        if return_fig:
+            return fig
+        fig.show()
+        return None
+
+
+def _validate_residual_inputs(
     df: pd.DataFrame,
     time_col: str,
     actual_col: str,
@@ -226,6 +399,354 @@ def _validate_inputs(
         raise ValueError(f"width must be positive, got {width}.")
     if height <= 0:
         raise ValueError(f"height must be positive, got {height}.")
+
+
+def _validate_acf_pacf_inputs(
+    df: DataFrameLike,
+    time_col: str,
+    value_col: str,
+    backend: str,
+    width: int,
+    height: int,
+    alpha: float,
+    lags: int | None,
+) -> None:
+    """Validate inputs for plot_acf / plot_pacf.
+
+    Checks DataFrame type, column existence, dtypes, missing values,
+    duplicates, and parameter constraints. Converts Polars to pandas
+    internally before column-level checks.
+    """
+    from tsbricks.blocks.utils import _is_pandas_df, _is_polars_df
+
+    # --- DataFrame type ---
+    if not (_is_pandas_df(df) or _is_polars_df(df)):
+        raise TypeError(
+            f"df must be a pandas or Polars DataFrame, got {type(df).__name__}."
+        )
+
+    # Convert to pandas for uniform validation
+    pdf = convert_to_pandas(df)
+
+    # --- Empty / too-small ---
+    if len(pdf) == 0:
+        raise ValueError("DataFrame must not be empty.")
+    if len(pdf) < 2:
+        raise ValueError(f"DataFrame must have at least 2 rows, got {len(pdf)}.")
+
+    # --- Column existence ---
+    for col_name, label in [(time_col, "time_col"), (value_col, "value_col")]:
+        if col_name not in pdf.columns:
+            raise ValueError(
+                f"{label} '{col_name}' not found in DataFrame. "
+                f"Available columns: {pdf.columns.tolist()}"
+            )
+
+    # --- time_col dtype: must be datetime-like or integer ---
+    time_dtype = pdf[time_col].dtype
+    is_datetime = pd.api.types.is_datetime64_any_dtype(time_dtype)
+    is_integer = pd.api.types.is_integer_dtype(time_dtype)
+    if not (is_datetime or is_integer):
+        # Object columns may hold Python datetime objects (e.g. from databases
+        # or timezone-aware datetimes stored as object dtype).  Use pandas
+        # value-level inference to accept these while still rejecting strings,
+        # categoricals, and other non-datetime object columns.
+        inferred = pd.api.types.infer_dtype(pdf[time_col], skipna=True)
+        if inferred not in ("datetime", "datetime64", "date"):
+            raise ValueError(
+                f"time_col '{time_col}' must be datetime-like or integer dtype, "
+                f"got {time_dtype}."
+            )
+
+    # --- value_col dtype: must be real numeric (not complex) ---
+    value_dtype = pdf[value_col].dtype
+    if not pd.api.types.is_numeric_dtype(value_dtype) or pd.api.types.is_complex_dtype(
+        value_dtype
+    ):
+        raise ValueError(f"value_col '{value_col}' must be numeric, got {value_dtype}.")
+
+    # --- Missing values ---
+    time_na = pdf[time_col].isna().sum()
+    if time_na > 0:
+        raise ValueError(
+            f"time_col '{time_col}' contains {int(time_na)} missing value(s)."
+        )
+    value_na = pdf[value_col].isna().sum()
+    if value_na > 0:
+        raise ValueError(
+            f"value_col '{value_col}' contains {int(value_na)} missing value(s)."
+        )
+
+    # --- Duplicate time values ---
+    n_dups = pdf[time_col].duplicated().sum()
+    if n_dups > 0:
+        raise ValueError(
+            f"time_col '{time_col}' contains {int(n_dups)} duplicate value(s)."
+        )
+
+    # --- backend ---
+    if backend not in ("plotly", "matplotlib"):
+        raise ValueError(
+            f"Invalid backend '{backend}'. Must be 'plotly' or 'matplotlib'."
+        )
+
+    # --- width / height: strict integer type + positive ---
+    for param_name, param_val in [("width", width), ("height", height)]:
+        if isinstance(param_val, bool) or not isinstance(param_val, (int, np.integer)):
+            raise TypeError(
+                f"{param_name} must be a positive integer, "
+                f"got {type(param_val).__name__}."
+            )
+        if param_val <= 0:
+            raise ValueError(f"{param_name} must be positive, got {param_val}.")
+
+    # --- alpha: 0 < alpha < 1 ---
+    if not (0 < alpha < 1):
+        raise ValueError(f"alpha must be between 0 and 1 exclusive, got {alpha}.")
+
+    # --- lags: None or positive integer (not bool) ---
+    if lags is not None:
+        if isinstance(lags, bool) or not isinstance(lags, (int, np.integer)):
+            raise TypeError(
+                f"lags must be a positive integer or None, got {type(lags).__name__}."
+            )
+        if lags < 1:
+            raise ValueError(f"lags must be >= 1, got {lags}.")
+
+
+def _compute_acf(
+    df: DataFrameLike,
+    time_col: str,
+    value_col: str,
+    *,
+    lags: int | None,
+    alpha: float,
+    adjusted: bool,
+    fft: bool,
+    bartlett_confint: bool,
+    zero: bool,
+) -> AcfResult:
+    """Compute ACF values and confidence intervals for plotting.
+
+    Sorts by *time_col*, extracts the 1-D series from *value_col*,
+    delegates to ``statsmodels.tsa.stattools.acf``, and centres the
+    returned confidence interval at zero.
+
+    Returns:
+        AcfResult with lag indices, correlation values, and CI bounds.
+    """
+    series = _prepare_series(df, time_col, value_col)
+
+    kwargs: dict = dict(
+        alpha=alpha,
+        adjusted=adjusted,
+        fft=fft,
+        bartlett_confint=bartlett_confint,
+    )
+    if lags is not None:
+        kwargs["nlags"] = lags
+
+    acf_values, confint = _sm_acf(series, **kwargs)
+
+    ci_lower, ci_upper = _center_confint(acf_values, confint)
+    lag_indices = np.arange(len(acf_values))
+
+    if not zero:
+        acf_values = acf_values[1:]
+        ci_lower = ci_lower[1:]
+        ci_upper = ci_upper[1:]
+        lag_indices = lag_indices[1:]
+
+    return AcfResult(
+        lags=lag_indices,
+        values=acf_values,
+        ci_lower=ci_lower,
+        ci_upper=ci_upper,
+    )
+
+
+def _compute_pacf(
+    df: DataFrameLike,
+    time_col: str,
+    value_col: str,
+    *,
+    lags: int | None,
+    alpha: float,
+    method: str | None,
+    zero: bool,
+) -> AcfResult:
+    """Compute PACF values and confidence intervals for plotting.
+
+    Sorts by *time_col*, extracts the 1-D series from *value_col*,
+    delegates to ``statsmodels.tsa.stattools.pacf``, and centres the
+    returned confidence interval at zero.
+
+    When *method* is ``None`` the ``method`` keyword is omitted from
+    the statsmodels call, so statsmodels applies its own current
+    default.
+
+    Returns:
+        AcfResult with lag indices, correlation values, and CI bounds.
+    """
+    series = _prepare_series(df, time_col, value_col)
+
+    kwargs: dict = dict(alpha=alpha)
+    if lags is not None:
+        kwargs["nlags"] = lags
+    if method is not None:
+        kwargs["method"] = method
+
+    pacf_values, confint = _sm_pacf(series, **kwargs)
+
+    ci_lower, ci_upper = _center_confint(pacf_values, confint)
+    lag_indices = np.arange(len(pacf_values))
+
+    if not zero:
+        pacf_values = pacf_values[1:]
+        ci_lower = ci_lower[1:]
+        ci_upper = ci_upper[1:]
+        lag_indices = lag_indices[1:]
+
+    return AcfResult(
+        lags=lag_indices,
+        values=pacf_values,
+        ci_lower=ci_lower,
+        ci_upper=ci_upper,
+    )
+
+
+def _prepare_series(
+    df: DataFrameLike,
+    time_col: str,
+    value_col: str,
+) -> np.ndarray:
+    """Sort by *time_col* and return the *value_col* as a 1-D numpy array."""
+    pdf = convert_to_pandas(df)
+    pdf = pdf.sort_values(by=time_col).reset_index(drop=True)
+    return pdf[value_col].to_numpy(dtype=float)
+
+
+def _center_confint(
+    values: np.ndarray,
+    confint: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Centre a statsmodels confint array at zero.
+
+    statsmodels returns bounds centred on the correlation value.
+    Subtracting the value shifts the band to be symmetric around 0.
+    """
+    ci_lower = confint[:, 0] - values
+    ci_upper = confint[:, 1] - values
+    return ci_lower, ci_upper
+
+
+def _plot_acf_pacf_matplotlib(
+    result: AcfResult,
+    ylabel: str,
+    width: int,
+    height: int,
+) -> mpl_fig.Figure:
+    """Render a lollipop-style ACF/PACF plot with matplotlib."""
+    import matplotlib.pyplot as plt
+
+    figsize = (width / _DPI, height / _DPI)
+    fig, ax = plt.subplots(figsize=figsize, dpi=_DPI)
+
+    lags = result.lags
+    values = result.values
+
+    # Confidence band
+    ax.fill_between(
+        lags,
+        result.ci_lower,
+        result.ci_upper,
+        color=_COLOR_PRIMARY,
+        alpha=0.2,
+    )
+
+    # Stems
+    ax.vlines(lags, 0, values, colors=_COLOR_PRIMARY, linewidth=_LINEWIDTH_PRIMARY)
+
+    # Markers
+    ax.scatter(lags, values, color=_COLOR_PRIMARY, s=15, zorder=3)
+
+    # Zero reference line
+    ax.axhline(y=0, color="black", linewidth=0.8)
+
+    # Labels — no title
+    ax.set_xlabel("lag")
+    ax.set_ylabel(ylabel)
+
+    # Black spines
+    for spine in ax.spines.values():
+        spine.set_color("black")
+
+    fig.tight_layout()
+    return fig
+
+
+def _plot_acf_pacf_plotly(
+    result: AcfResult,
+    ylabel: str,
+    width: int,
+    height: int,
+) -> go.Figure:
+    """Render a lollipop-style ACF/PACF plot with plotly."""
+    import plotly.graph_objects as go
+
+    lags = result.lags
+    values = result.values
+    fig = go.Figure()
+
+    # Confidence band (filled scatter)
+    fig.add_trace(
+        go.Scatter(
+            x=np.concatenate([lags, lags[::-1]]),
+            y=np.concatenate([result.ci_upper, result.ci_lower[::-1]]),
+            fill="toself",
+            fillcolor="rgba(31,119,180,0.2)",
+            line=dict(color="rgba(0,0,0,0)"),
+            showlegend=False,
+        )
+    )
+
+    # Stems (one trace per lag)
+    for lag, val in zip(lags, values):
+        fig.add_trace(
+            go.Scatter(
+                x=[lag, lag],
+                y=[0, val],
+                mode="lines",
+                line=dict(color=_COLOR_PRIMARY, width=_LINEWIDTH_PRIMARY),
+                showlegend=False,
+            )
+        )
+
+    # Markers
+    fig.add_trace(
+        go.Scatter(
+            x=lags,
+            y=values,
+            mode="markers",
+            marker=dict(color=_COLOR_PRIMARY, size=5),
+            showlegend=False,
+        )
+    )
+
+    # Zero reference line
+    fig.add_hline(y=0, line=dict(color="black", width=0.8))
+
+    fig.update_layout(
+        width=width,
+        height=height,
+        xaxis_title="lag",
+        yaxis_title=ylabel,
+        title=None,
+        showlegend=False,
+        margin=dict(l=60, r=40, t=30, b=60),
+    )
+
+    return fig
 
 
 def _plot_matplotlib(
