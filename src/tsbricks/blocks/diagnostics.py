@@ -195,6 +195,161 @@ def plot_residual_diagnostics(
         return None
 
 
+def plot_acf(
+    df: DataFrameLike,
+    time_col: str,
+    value_col: str,
+    lags: int | None = None,
+    alpha: float = 0.05,
+    adjusted: bool = False,
+    fft: bool = True,
+    bartlett_confint: bool = True,
+    zero: bool = True,
+    backend: Literal["plotly", "matplotlib"] = "plotly",
+    width: int = 800,
+    height: int = 450,
+    return_fig: bool = False,
+) -> FigureLike | None:
+    """Plot the autocorrelation function (ACF) for a single time series.
+
+    Wraps ``statsmodels.tsa.stattools.acf`` and renders a lollipop-style
+    ACF plot with a confidence interval band centred at zero.
+
+    Args:
+        df: DataFrame containing the time series (pandas or Polars).
+        time_col: Column name for the time/order index.
+        value_col: Column name for the numeric series to analyse.
+        lags: Number of lags. *None* follows the statsmodels default.
+        alpha: Significance level for the confidence interval.
+        adjusted: If *True*, compute the denominator-adjusted ACF.
+        fft: If *True*, compute ACF via FFT.
+        bartlett_confint: If *True*, use Bartlett's formula for CI widths.
+        zero: If *True*, include lag 0 in the plot.
+        backend: ``"plotly"`` or ``"matplotlib"``.
+        width: Figure width in pixels.
+        height: Figure height in pixels.
+        return_fig: If *True*, return the figure without rendering.
+
+    Returns:
+        *None* when *return_fig* is *False* (renders immediately),
+        otherwise the native backend figure object.
+    """
+    _validate_acf_pacf_inputs(
+        df,
+        time_col,
+        value_col,
+        backend,
+        width,
+        height,
+        alpha,
+        lags,
+    )
+
+    result = _compute_acf(
+        df,
+        time_col,
+        value_col,
+        lags=lags,
+        alpha=alpha,
+        adjusted=adjusted,
+        fft=fft,
+        bartlett_confint=bartlett_confint,
+        zero=zero,
+    )
+
+    if backend == "matplotlib":
+        fig = _plot_acf_pacf_matplotlib(
+            result, ylabel="acf", width=width, height=height
+        )
+        if return_fig:
+            return fig
+        import matplotlib.pyplot as plt
+
+        plt.show()
+        return None
+    else:
+        fig = _plot_acf_pacf_plotly(result, ylabel="acf", width=width, height=height)
+        if return_fig:
+            return fig
+        fig.show()
+        return None
+
+
+def plot_pacf(
+    df: DataFrameLike,
+    time_col: str,
+    value_col: str,
+    lags: int | None = None,
+    alpha: float = 0.05,
+    method: str | None = None,
+    zero: bool = True,
+    backend: Literal["plotly", "matplotlib"] = "plotly",
+    width: int = 800,
+    height: int = 450,
+    return_fig: bool = False,
+) -> FigureLike | None:
+    """Plot the partial autocorrelation function (PACF) for a single time series.
+
+    Wraps ``statsmodels.tsa.stattools.pacf`` and renders a lollipop-style
+    PACF plot with a confidence interval band centred at zero.
+
+    Args:
+        df: DataFrame containing the time series (pandas or Polars).
+        time_col: Column name for the time/order index.
+        value_col: Column name for the numeric series to analyse.
+        lags: Number of lags. *None* follows the statsmodels default.
+        alpha: Significance level for the confidence interval.
+        method: PACF estimation method. *None* defers to the statsmodels
+            default for ``pacf(method=...)``.
+        zero: If *True*, include lag 0 in the plot.
+        backend: ``"plotly"`` or ``"matplotlib"``.
+        width: Figure width in pixels.
+        height: Figure height in pixels.
+        return_fig: If *True*, return the figure without rendering.
+
+    Returns:
+        *None* when *return_fig* is *False* (renders immediately),
+        otherwise the native backend figure object.
+    """
+    _validate_acf_pacf_inputs(
+        df,
+        time_col,
+        value_col,
+        backend,
+        width,
+        height,
+        alpha,
+        lags,
+    )
+
+    result = _compute_pacf(
+        df,
+        time_col,
+        value_col,
+        lags=lags,
+        alpha=alpha,
+        method=method,
+        zero=zero,
+    )
+
+    if backend == "matplotlib":
+        fig = _plot_acf_pacf_matplotlib(
+            result, ylabel="pacf", width=width, height=height
+        )
+        if return_fig:
+            return fig
+        import matplotlib.pyplot as plt
+
+        plt.show()
+        return None
+    else:
+        fig = _plot_acf_pacf_plotly(result, ylabel="pacf", width=width, height=height)
+        if return_fig:
+            return fig
+        fig.show()
+        return None
+
+
 def _convert_to_pandas(df: DataFrameLike) -> pd.DataFrame:
     """Convert polars DataFrame to pandas if needed."""
     if isinstance(df, pd.DataFrame):
