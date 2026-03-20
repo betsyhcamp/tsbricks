@@ -9,6 +9,8 @@ import numpy as np
 import pandas as pd
 from statsmodels.tsa.stattools import acf as _sm_acf, pacf as _sm_pacf
 
+from tsbricks.blocks.utils import convert_to_pandas
+
 if TYPE_CHECKING:
     import matplotlib.figure as mpl_fig
     import plotly.graph_objects as go
@@ -67,7 +69,7 @@ class ResidualDiagnostics:
     kde_y: np.ndarray
 
 
-def _compute_diagnostics(
+def _compute_residual_diagnostics(
     df: pd.DataFrame,
     time_col: str,
     actual_col: str,
@@ -161,12 +163,16 @@ def plot_residual_diagnostics(
             or if invalid parameters are provided.
     """
     # Convert polars to pandas if needed
-    df = _convert_to_pandas(df)
+    df = convert_to_pandas(df)
 
     # Validate inputs
-    _validate_inputs(df, time_col, actual_col, fitted_col, backend, width, height)
+    _validate_residual_inputs(
+        df, time_col, actual_col, fitted_col, backend, width, height
+    )
 
-    diagnostics_data = _compute_diagnostics(df, time_col, actual_col, fitted_col, nlags)
+    diagnostics_data = _compute_residual_diagnostics(
+        df, time_col, actual_col, fitted_col, nlags
+    )
 
     # Dispatch to backend
     if backend == "matplotlib":
@@ -350,14 +356,7 @@ def plot_pacf(
         return None
 
 
-def _convert_to_pandas(df: DataFrameLike) -> pd.DataFrame:
-    """Convert polars DataFrame to pandas if needed."""
-    if isinstance(df, pd.DataFrame):
-        return df
-    return df.to_pandas()
-
-
-def _validate_inputs(
+def _validate_residual_inputs(
     df: pd.DataFrame,
     time_col: str,
     actual_col: str,
@@ -427,7 +426,7 @@ def _validate_acf_pacf_inputs(
         )
 
     # Convert to pandas for uniform validation
-    pdf = _convert_to_pandas(df)
+    pdf = convert_to_pandas(df)
 
     # --- Empty / too-small ---
     if len(pdf) == 0:
@@ -622,7 +621,7 @@ def _prepare_series(
     value_col: str,
 ) -> np.ndarray:
     """Sort by *time_col* and return the *value_col* as a 1-D numpy array."""
-    pdf = _convert_to_pandas(df)
+    pdf = convert_to_pandas(df)
     pdf = pdf.sort_values(by=time_col).reset_index(drop=True)
     return pdf[value_col].to_numpy(dtype=float)
 

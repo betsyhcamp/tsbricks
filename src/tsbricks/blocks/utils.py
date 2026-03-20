@@ -56,3 +56,17 @@ def missing_required_columns(df, required: Iterable[str] = _REQUIRED) -> None:
     missing = set(required) - set(columns)
     if missing:
         raise ValueError(f"Input DataFrame missing required columns: {sorted(missing)}")
+
+
+def convert_to_pandas(df):
+    """Convert a Polars DataFrame to pandas; pass through pandas DataFrames unchanged.
+
+    Args:
+        df: A pandas or Polars DataFrame.
+
+    Returns:
+        A pandas DataFrame.
+    """
+    if _is_pandas_df(df):
+        return df
+    return df.to_pandas()

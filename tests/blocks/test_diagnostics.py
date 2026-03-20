@@ -18,13 +18,12 @@ from tsbricks.blocks.diagnostics import (
     ResidualDiagnostics,
     _center_confint,
     _compute_acf,
-    _compute_diagnostics,
+    _compute_residual_diagnostics,
     _compute_pacf,
-    _convert_to_pandas,
     _plot_acf_pacf_matplotlib,
     _plot_acf_pacf_plotly,
     _prepare_series,
-    _validate_inputs,
+    _validate_residual_inputs,
     _validate_acf_pacf_inputs,
     _plot_matplotlib,
     _plot_plotly,
@@ -32,16 +31,17 @@ from tsbricks.blocks.diagnostics import (
     plot_pacf,
     plot_residual_diagnostics,
 )
+from tsbricks.blocks.utils import convert_to_pandas
 
 
 # =====================================================================
-# _compute_diagnostics
+# _compute_residual_diagnostics
 # =====================================================================
 
 
-def test_compute_diagnostics_happy_path(diag_df):
+def test_compute_residual_diagnostics_happy_path(diag_df):
     """Computes sorted residuals, ACF, and KDE for valid input."""
-    result = _compute_diagnostics(diag_df, "time", "actual", "fitted", nlags=2)
+    result = _compute_residual_diagnostics(diag_df, "time", "actual", "fitted", nlags=2)
     assert isinstance(result, ResidualDiagnostics)
     assert np.all(result.timestamps == np.array([1, 2, 3, 4, 5]))
     expected_residuals = np.array([0.5, -0.5, 0.5, 0.5, -0.5])
@@ -52,7 +52,7 @@ def test_compute_diagnostics_happy_path(diag_df):
     assert len(result.kde_y) == 200
 
 
-def test_compute_diagnostics_default_nlags():
+def test_compute_residual_diagnostics_default_nlags():
     """Uses guarded default nlags=max(1, min(40, n//4)) when None."""
     df = pd.DataFrame(
         {
@@ -61,19 +61,19 @@ def test_compute_diagnostics_default_nlags():
             "fitted": np.zeros(8),
         }
     )
-    result = _compute_diagnostics(df, "time", "actual", "fitted", nlags=None)
+    result = _compute_residual_diagnostics(df, "time", "actual", "fitted", nlags=None)
     # n=8, n//4=2, min(40,2)=2, max(1,2)=2 -> 3 values
     assert len(result.acf_values) == 3
 
 
-def test_compute_diagnostics_confidence_interval(diag_df):
+def test_compute_residual_diagnostics_confidence_interval(diag_df):
     """Confidence interval equals 1.96 / sqrt(n)."""
-    result = _compute_diagnostics(diag_df, "time", "actual", "fitted", nlags=1)
+    result = _compute_residual_diagnostics(diag_df, "time", "actual", "fitted", nlags=1)
     expected = 1.96 / np.sqrt(len(diag_df))
     assert result.conf_interval == pytest.approx(expected)
 
 
-def test_compute_diagnostics_zero_variance_raises():
+def test_compute_residual_diagnostics_zero_variance_raises():
     """Raises ValueError when residuals have near-zero variance."""
     df = pd.DataFrame(
         {
@@ -83,27 +83,27 @@ def test_compute_diagnostics_zero_variance_raises():
         }
     )
     with pytest.raises(ValueError, match="near-zero variance"):
-        _compute_diagnostics(df, "time", "actual", "fitted", nlags=1)
+        _compute_residual_diagnostics(df, "time", "actual", "fitted", nlags=1)
 
 
-def test_compute_diagnostics_explicit_nlags(diag_df):
+def test_compute_residual_diagnostics_explicit_nlags(diag_df):
     """Honors user-supplied nlags value."""
-    result = _compute_diagnostics(diag_df, "time", "actual", "fitted", nlags=3)
+    result = _compute_residual_diagnostics(diag_df, "time", "actual", "fitted", nlags=3)
     assert len(result.acf_values) == 4  # nlags=3 -> lags 0,1,2,3
 
 
 # =====================================================================
-# _convert_to_pandas
+# convert_to_pandas
 # =====================================================================
 
 
-def test_convert_to_pandas_noop(diag_df):
+def testconvert_to_pandas_noop(diag_df):
     """Returns same object when input is already pandas."""
-    result = _convert_to_pandas(diag_df)
+    result = convert_to_pandas(diag_df)
     assert result is diag_df
 
 
-def test_convert_to_pandas_from_polars():
+def testconvert_to_pandas_from_polars():
     """Converts polars DataFrame to pandas."""
     pl = pytest.importorskip("polars")
     pl_frame = pl.DataFrame(
@@ -113,31 +113,31 @@ def test_convert_to_pandas_from_polars():
             "fitted": [0.5, 1.5, 2.5],
         }
     )
-    result = _convert_to_pandas(pl_frame)
+    result = convert_to_pandas(pl_frame)
     assert isinstance(result, pd.DataFrame)
 
 
 # =====================================================================
-# _validate_inputs
+# _validate_residual_inputs
 # =====================================================================
 
 
-def test_validate_inputs_valid_passes(diag_df):
+def test_validate_residual_inputs_valid_passes(diag_df):
     """Passes silently for valid DataFrame and parameters."""
-    _validate_inputs(diag_df, "time", "actual", "fitted", "plotly", 800, 600)
+    _validate_residual_inputs(diag_df, "time", "actual", "fitted", "plotly", 800, 600)
 
 
-def test_validate_inputs_too_few_rows():
+def test_validate_residual_inputs_too_few_rows():
     """Raises ValueError when DataFrame has fewer than 2 rows."""
     df = pd.DataFrame({"t": [1], "a": [1.0], "f": [1.0]})
     with pytest.raises(ValueError, match="at least 2 rows"):
-        _validate_inputs(df, "t", "a", "f", "plotly", 800, 600)
+        _validate_residual_inputs(df, "t", "a", "f", "plotly", 800, 600)
 
 
-def test_validate_inputs_missing_columns(diag_df):
+def test_validate_residual_inputs_missing_columns(diag_df):
     """Raises ValueError when required columns are absent."""
     with pytest.raises(ValueError, match="not found"):
-        _validate_inputs(
+        _validate_residual_inputs(
             diag_df,
             "time",
             "actual",
@@ -148,7 +148,7 @@ def test_validate_inputs_missing_columns(diag_df):
         )
 
 
-def test_validate_inputs_nan_values():
+def test_validate_residual_inputs_nan_values():
     """Raises ValueError when NaN values present in columns."""
     df = pd.DataFrame(
         {
@@ -158,13 +158,13 @@ def test_validate_inputs_nan_values():
         }
     )
     with pytest.raises(ValueError, match="NaN values found"):
-        _validate_inputs(df, "t", "a", "f", "plotly", 800, 600)
+        _validate_residual_inputs(df, "t", "a", "f", "plotly", 800, 600)
 
 
-def test_validate_inputs_invalid_backend(diag_df):
+def test_validate_residual_inputs_invalid_backend(diag_df):
     """Raises ValueError for unsupported backend string."""
     with pytest.raises(ValueError, match="Invalid backend"):
-        _validate_inputs(
+        _validate_residual_inputs(
             diag_df,
             "time",
             "actual",
@@ -175,10 +175,10 @@ def test_validate_inputs_invalid_backend(diag_df):
         )
 
 
-def test_validate_inputs_nonpositive_width(diag_df):
+def test_validate_residual_inputs_nonpositive_width(diag_df):
     """Raises ValueError when width is zero or negative."""
     with pytest.raises(ValueError, match="width must be positive"):
-        _validate_inputs(
+        _validate_residual_inputs(
             diag_df,
             "time",
             "actual",
@@ -189,10 +189,10 @@ def test_validate_inputs_nonpositive_width(diag_df):
         )
 
 
-def test_validate_inputs_nonpositive_height(diag_df):
+def test_validate_residual_inputs_nonpositive_height(diag_df):
     """Raises ValueError when height is zero or negative."""
     with pytest.raises(ValueError, match="height must be positive"):
-        _validate_inputs(
+        _validate_residual_inputs(
             diag_df,
             "time",
             "actual",
@@ -302,7 +302,7 @@ def test_plot_diagnostics_polars_input():
 
 
 def test_plot_diagnostics_invalid_input_propagates():
-    """Propagates validation errors from _validate_inputs."""
+    """Propagates validation errors from _validate_residual_inputs."""
     df = pd.DataFrame({"time": [1], "actual": [1.0], "fitted": [1.0]})
     with pytest.raises(ValueError, match="at least 2 rows"):
         plot_residual_diagnostics(df, "time", "actual", "fitted")
