@@ -480,6 +480,115 @@ def _center_confint(
     return ci_lower, ci_upper
 
 
+def _plot_acf_pacf_matplotlib(
+    result: AcfResult,
+    ylabel: str,
+    width: int,
+    height: int,
+) -> mpl_fig.Figure:
+    """Render a lollipop-style ACF/PACF plot with matplotlib."""
+    import matplotlib.pyplot as plt
+
+    figsize = (width / _DPI, height / _DPI)
+    fig, ax = plt.subplots(figsize=figsize, dpi=_DPI)
+
+    lags = result.lags
+    values = result.values
+
+    # Confidence band
+    ax.fill_between(
+        lags,
+        result.ci_lower,
+        result.ci_upper,
+        color=_COLOR_PRIMARY,
+        alpha=0.2,
+    )
+
+    # Stems
+    ax.vlines(lags, 0, values, colors=_COLOR_PRIMARY, linewidth=_LINEWIDTH_PRIMARY)
+
+    # Markers
+    ax.scatter(lags, values, color=_COLOR_PRIMARY, s=15, zorder=3)
+
+    # Zero reference line
+    ax.axhline(y=0, color="black", linewidth=0.8)
+
+    # Labels — no title
+    ax.set_xlabel("lag")
+    ax.set_ylabel(ylabel)
+
+    # Black spines
+    for spine in ax.spines.values():
+        spine.set_color("black")
+
+    fig.tight_layout()
+    return fig
+
+
+def _plot_acf_pacf_plotly(
+    result: AcfResult,
+    ylabel: str,
+    width: int,
+    height: int,
+) -> go.Figure:
+    """Render a lollipop-style ACF/PACF plot with plotly."""
+    import plotly.graph_objects as go
+
+    lags = result.lags
+    values = result.values
+    fig = go.Figure()
+
+    # Confidence band (filled scatter)
+    fig.add_trace(
+        go.Scatter(
+            x=np.concatenate([lags, lags[::-1]]),
+            y=np.concatenate([result.ci_upper, result.ci_lower[::-1]]),
+            fill="toself",
+            fillcolor="rgba(31,119,180,0.2)",
+            line=dict(color="rgba(0,0,0,0)"),
+            showlegend=False,
+        )
+    )
+
+    # Stems (one trace per lag)
+    for lag, val in zip(lags, values):
+        fig.add_trace(
+            go.Scatter(
+                x=[lag, lag],
+                y=[0, val],
+                mode="lines",
+                line=dict(color=_COLOR_PRIMARY, width=_LINEWIDTH_PRIMARY),
+                showlegend=False,
+            )
+        )
+
+    # Markers
+    fig.add_trace(
+        go.Scatter(
+            x=lags,
+            y=values,
+            mode="markers",
+            marker=dict(color=_COLOR_PRIMARY, size=5),
+            showlegend=False,
+        )
+    )
+
+    # Zero reference line
+    fig.add_hline(y=0, line=dict(color="black", width=0.8))
+
+    fig.update_layout(
+        width=width,
+        height=height,
+        xaxis_title="lag",
+        yaxis_title=ylabel,
+        title=None,
+        showlegend=False,
+        margin=dict(l=60, r=40, t=30, b=60),
+    )
+
+    return fig
+
+
 def _plot_matplotlib(
     data: ResidualDiagnostics,
     hist_bins: int | str,
