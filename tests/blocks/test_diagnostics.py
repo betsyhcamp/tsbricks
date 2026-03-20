@@ -399,6 +399,45 @@ def test_validate_acf_pacf_time_col_string_dtype():
         _validate_acf_pacf_inputs(df, "time", "value", **_DEFAULTS)
 
 
+def test_validate_acf_pacf_time_col_object_datetime_accepted():
+    """Accepts object-dtype column containing Python datetime objects."""
+    from datetime import datetime
+
+    df = pd.DataFrame(
+        {
+            "time": [datetime(2020, 1, 1), datetime(2020, 1, 2), datetime(2020, 1, 3)],
+            "value": [1.0, 2.0, 3.0],
+        }
+    )
+    # Should not raise
+    _validate_acf_pacf_inputs(df, "time", "value", **_DEFAULTS)
+
+
+def test_validate_acf_pacf_time_col_tz_aware_accepted():
+    """Accepts timezone-aware datetime column."""
+    df = pd.DataFrame(
+        {
+            "time": pd.to_datetime(
+                ["2020-01-01", "2020-01-02", "2020-01-03"]
+            ).tz_localize("US/Eastern"),
+            "value": [1.0, 2.0, 3.0],
+        }
+    )
+    _validate_acf_pacf_inputs(df, "time", "value", **_DEFAULTS)
+
+
+def test_validate_acf_pacf_time_col_object_string_rejected():
+    """Rejects object-dtype column containing strings (not datetimes)."""
+    df = pd.DataFrame(
+        {
+            "time": pd.array(["2020-01-01", "2020-01-02", "2020-01-03"], dtype=object),
+            "value": [1.0, 2.0, 3.0],
+        }
+    )
+    with pytest.raises(ValueError, match="datetime-like or integer dtype"):
+        _validate_acf_pacf_inputs(df, "time", "value", **_DEFAULTS)
+
+
 def test_validate_acf_pacf_value_col_non_numeric():
     """Raises ValueError when value_col is non-numeric."""
     df = pd.DataFrame({"time": [1, 2, 3], "value": ["a", "b", "c"]})
