@@ -28,6 +28,8 @@ from tsbricks.blocks.diagnostics import (
     _validate_acf_pacf_inputs,
     _plot_matplotlib,
     _plot_plotly,
+    plot_acf,
+    plot_pacf,
     plot_residual_diagnostics,
 )
 
@@ -1177,3 +1179,215 @@ def test_plot_acf_pacf_plotly_stem_count_matches_lags(acf_result):
     n_lags = len(acf_result.lags)
     # traces: 1 CI band + n_lags stems + 1 markers = n_lags + 2
     assert len(fig.data) == n_lags + 2
+
+
+# =====================================================================
+# plot_acf  (public API)
+# =====================================================================
+
+
+def test_plot_acf_plotly_return_fig(acf_df_datetime):
+    """Returns a plotly Figure when return_fig=True."""
+    import plotly.graph_objects as go
+
+    fig = plot_acf(
+        acf_df_datetime,
+        "time",
+        "value",
+        return_fig=True,
+    )
+    assert isinstance(fig, go.Figure)
+
+
+def test_plot_acf_plotly_return_none(acf_df_datetime, mocker):
+    """Returns None when return_fig=False (default)."""
+    mocker.patch("plotly.graph_objects.Figure.show")
+    result = plot_acf(acf_df_datetime, "time", "value")
+    assert result is None
+
+
+def test_plot_acf_matplotlib_return_fig(acf_df_datetime):
+    """Returns a matplotlib Figure when backend='matplotlib'."""
+    pytest.importorskip("matplotlib")
+    import matplotlib.figure as mpl_fig
+    import matplotlib.pyplot as plt
+
+    fig = plot_acf(
+        acf_df_datetime,
+        "time",
+        "value",
+        backend="matplotlib",
+        return_fig=True,
+    )
+    assert isinstance(fig, mpl_fig.Figure)
+    plt.close(fig)
+
+
+def test_plot_acf_ylabel_is_acf(acf_df_datetime):
+    """Plotly figure y-axis label is 'acf'."""
+    fig = plot_acf(acf_df_datetime, "time", "value", return_fig=True)
+    assert fig.layout.yaxis.title.text == "acf"
+
+
+def test_plot_acf_zero_false_excludes_lag_zero(acf_df_datetime):
+    """When zero=False, lag 0 is not in the plot data."""
+    fig = plot_acf(
+        acf_df_datetime,
+        "time",
+        "value",
+        zero=False,
+        return_fig=True,
+    )
+    # The marker trace is the last one; its x values should start at 1
+    marker_trace = fig.data[-1]
+    assert marker_trace.x[0] == 1
+
+
+def test_plot_acf_passthrough_params(acf_df_datetime):
+    """adjusted, fft, bartlett_confint are accepted without error."""
+    fig = plot_acf(
+        acf_df_datetime,
+        "time",
+        "value",
+        lags=2,
+        adjusted=True,
+        fft=False,
+        bartlett_confint=False,
+        return_fig=True,
+    )
+    assert fig is not None
+
+
+def test_plot_acf_validation_propagates(acf_df_datetime):
+    """Validation errors from _validate_acf_pacf_inputs propagate."""
+    with pytest.raises(ValueError, match="backend"):
+        plot_acf(acf_df_datetime, "time", "value", backend="seaborn")
+
+
+def test_plot_acf_integer_time_col(acf_df_integer):
+    """Works with integer time_col."""
+    fig = plot_acf(acf_df_integer, "time", "value", return_fig=True)
+    assert fig is not None
+
+
+def test_plot_acf_polars_input():
+    """Accepts a Polars DataFrame."""
+    pl = pytest.importorskip("polars")
+    df = pl.DataFrame(
+        {
+            "time": [1, 2, 3, 4, 5],
+            "value": [1.0, 2.5, 1.5, 3.0, 2.0],
+        }
+    )
+    fig = plot_acf(df, "time", "value", return_fig=True)
+    assert fig is not None
+
+
+# =====================================================================
+# plot_pacf  (public API)
+# =====================================================================
+
+
+def test_plot_pacf_plotly_return_fig(acf_df_datetime):
+    """Returns a plotly Figure when return_fig=True."""
+    import plotly.graph_objects as go
+
+    fig = plot_pacf(
+        acf_df_datetime,
+        "time",
+        "value",
+        return_fig=True,
+    )
+    assert isinstance(fig, go.Figure)
+
+
+def test_plot_pacf_plotly_return_none(acf_df_datetime, mocker):
+    """Returns None when return_fig=False (default)."""
+    mocker.patch("plotly.graph_objects.Figure.show")
+    result = plot_pacf(acf_df_datetime, "time", "value")
+    assert result is None
+
+
+def test_plot_pacf_matplotlib_return_fig(acf_df_datetime):
+    """Returns a matplotlib Figure when backend='matplotlib'."""
+    pytest.importorskip("matplotlib")
+    import matplotlib.figure as mpl_fig
+    import matplotlib.pyplot as plt
+
+    fig = plot_pacf(
+        acf_df_datetime,
+        "time",
+        "value",
+        backend="matplotlib",
+        return_fig=True,
+    )
+    assert isinstance(fig, mpl_fig.Figure)
+    plt.close(fig)
+
+
+def test_plot_pacf_ylabel_is_pacf(acf_df_datetime):
+    """Plotly figure y-axis label is 'pacf'."""
+    fig = plot_pacf(acf_df_datetime, "time", "value", return_fig=True)
+    assert fig.layout.yaxis.title.text == "pacf"
+
+
+def test_plot_pacf_zero_false_excludes_lag_zero(acf_df_datetime):
+    """When zero=False, lag 0 is not in the plot data."""
+    fig = plot_pacf(
+        acf_df_datetime,
+        "time",
+        "value",
+        zero=False,
+        return_fig=True,
+    )
+    marker_trace = fig.data[-1]
+    assert marker_trace.x[0] == 1
+
+
+def test_plot_pacf_method_none_accepted(acf_df_datetime):
+    """method=None is accepted (defers to statsmodels default)."""
+    fig = plot_pacf(
+        acf_df_datetime,
+        "time",
+        "value",
+        method=None,
+        return_fig=True,
+    )
+    assert fig is not None
+
+
+def test_plot_pacf_method_explicit_accepted(acf_df_datetime):
+    """An explicit method string is accepted."""
+    fig = plot_pacf(
+        acf_df_datetime,
+        "time",
+        "value",
+        method="ywmle",
+        return_fig=True,
+    )
+    assert fig is not None
+
+
+def test_plot_pacf_validation_propagates(acf_df_datetime):
+    """Validation errors from _validate_acf_pacf_inputs propagate."""
+    with pytest.raises(ValueError, match="alpha"):
+        plot_pacf(acf_df_datetime, "time", "value", alpha=0.0)
+
+
+def test_plot_pacf_integer_time_col(acf_df_integer):
+    """Works with integer time_col."""
+    fig = plot_pacf(acf_df_integer, "time", "value", return_fig=True)
+    assert fig is not None
+
+
+def test_plot_pacf_polars_input():
+    """Accepts a Polars DataFrame."""
+    pl = pytest.importorskip("polars")
+    df = pl.DataFrame(
+        {
+            "time": [1, 2, 3, 4, 5],
+            "value": [1.0, 2.5, 1.5, 3.0, 2.0],
+        }
+    )
+    fig = plot_pacf(df, "time", "value", return_fig=True)
+    assert fig is not None
