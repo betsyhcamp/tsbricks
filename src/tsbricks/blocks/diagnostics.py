@@ -298,11 +298,12 @@ def _validate_acf_pacf_inputs(
             f"got {time_dtype}."
         )
 
-    # --- value_col dtype: must be numeric ---
-    if not pd.api.types.is_numeric_dtype(pdf[value_col].dtype):
-        raise ValueError(
-            f"value_col '{value_col}' must be numeric, got {pdf[value_col].dtype}."
-        )
+    # --- value_col dtype: must be real numeric (not complex) ---
+    value_dtype = pdf[value_col].dtype
+    if not pd.api.types.is_numeric_dtype(value_dtype) or pd.api.types.is_complex_dtype(
+        value_dtype
+    ):
+        raise ValueError(f"value_col '{value_col}' must be numeric, got {value_dtype}.")
 
     # --- Missing values ---
     time_na = pdf[time_col].isna().sum()
