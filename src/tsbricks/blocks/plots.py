@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING, TypeAlias
 
 import numpy as np
@@ -197,3 +198,223 @@ def _validate_base_freq(
             "Please provide base_freq explicitly. "
             f"Supported values: {sorted(_SUPPORTED_BASE_FREQS)}."
         )
+
+
+# =====================================================================
+# Mapping from offset aliases to Period frequencies
+# =====================================================================
+
+_BASE_FREQ_TO_PERIOD_FREQ = {
+    "D": "D",
+    "h": "h",
+    "W": "W-SUN",
+    "W-SUN": "W-SUN",
+    "W-MON": "W-MON",
+    "W-TUE": "W-TUE",
+    "W-WED": "W-WED",
+    "W-THU": "W-THU",
+    "W-FRI": "W-FRI",
+    "W-SAT": "W-SAT",
+    "MS": "M",
+    "ME": "M",
+    "QS": "Q",
+    "QE": "Q",
+    "YS": "Y",
+    "YE": "Y",
+}
+
+
+# =====================================================================
+# Season assignment helpers
+# =====================================================================
+
+
+def _resolve_base_freq(
+    df: pd.DataFrame,
+    time_col: str,
+    base_freq: str | None,
+) -> str:
+    """Return provided base_freq or infer from data.
+
+    Assumes validation has already confirmed that inference will
+    succeed and produce a supported value.
+    """
+    if base_freq is not None:
+        return base_freq
+    sorted_times = df[time_col].sort_values()
+    return pd.infer_freq(sorted_times)
+
+
+def _assign_calendar_seasons(
+    df: pd.DataFrame,
+    time_col: str,
+    period: str,
+) -> pd.DataFrame:
+    """Assign _season_id and _position via calendar-aligned grouping.
+
+    Used when time_col is datetime-like and period is a named string.
+    """
+    pdf = df.copy()
+    times = pdf[time_col]
+
+    if period in ("year", "Y"):
+        pdf["_season_id"] = times.dt.year.astype(str)
+    elif period in ("quarter", "Q"):
+        pdf["_season_id"] = (
+            times.dt.year.astype(str) + "-Q" + times.dt.quarter.astype(str)
+        )
+    elif period in ("month", "M"):
+        pdf["_season_id"] = times.dt.to_period("M").astype(str)
+    elif period in ("week", "W"):
+        # Sunday-start weeks: find the Sunday that begins each week
+        offset_days = (times.dt.dayofweek + 1) % 7
+        week_start = times - pd.to_timedelta(offset_days, unit="D")
+        pdf["_season_id"] = week_start.dt.strftime("%Y-%m-%d")
+
+    pdf["_position"] = pdf.groupby("_season_id", sort=False).cumcount() + 1
+    return pdf
+
+
+def _assign_positional_seasons(
+    df: pd.DataFrame,
+    period: int,
+) -> pd.DataFrame:
+    """Assign _season_id and _position via positional grouping.
+
+    Used when time_col is integer dtype and period is an integer.
+    Every ``period`` consecutive observations form one season.
+    """
+    pdf = df.copy()
+    indices = np.arange(len(pdf))
+    pdf["_season_id"] = (indices // period).astype(str)
+    pdf["_position"] = (indices % period) + 1
+    return pdf
+
+
+def _assign_frequency_seasons(
+    df: pd.DataFrame,
+    time_col: str,
+    period: int,
+    base_freq: str,
+) -> pd.DataFrame:
+    """Assign _season_id and _position via frequency-aligned grouping.
+
+    Used when time_col is datetime-like and period is an integer.
+    ``base_freq`` defines the step size; every ``period`` steps form
+    one season.
+    """
+    pdf = df.copy()
+    period_freq = _BASE_FREQ_TO_PERIOD_FREQ[base_freq]
+    period_index = pd.PeriodIndex(pdf[time_col], freq=period_freq)
+    ordinals = period_index.asi8
+    step_indices = ordinals - ordinals[0]
+
+    season_indices = step_indices // period
+    pdf["_position"] = (step_indices % period) + 1
+
+    # Label each season by its earliest observation date
+    pdf["_season_idx"] = season_indices
+    min_dates = pdf.groupby("_season_idx")[time_col].transform("first")
+    pdf["_season_id"] = min_dates.dt.strftime("%Y-%m-%d")
+    pdf.drop(columns=["_season_idx"], inplace=True)
+
+    return pdf
+
+
+# =====================================================================
+# Data sufficiency
+# =====================================================================
+
+
+def _check_data_sufficiency(
+    df: pd.DataFrame,
+    period: str | int,
+) -> None:
+    """Validate that there is enough data for a seasonal plot.
+
+    Raises ValueError if less than one full season. Emits a warning
+    if there is exactly one full season.
+    """
+    if isinstance(period, str):
+        # Group-based rule (datetime + named period)
+        n_seasons = df["_season_id"].nunique()
+        if n_seasons < 2:
+            raise ValueError(
+                "Not enough data for a seasonal plot. "
+                "Need at least 2 seasons, got "
+                f"{n_seasons}."
+            )
+        if n_seasons == 2:
+            warnings.warn(
+                "Only 2 distinct seasons found. Consider "
+                "using more data for a meaningful seasonal "
+                "comparison.",
+                stacklevel=3,
+            )
+    else:
+        # Count-based rule (integer period)
+        n = len(df)
+        int_period = int(period)
+        if n < int_period:
+            raise ValueError(
+                "Not enough data for a seasonal plot. "
+                f"Need at least {int_period} observations "
+                f"(one full season), got {n}."
+            )
+        if n < 2 * int_period:
+            warnings.warn(
+                f"Only {n} observations for "
+                f"period={int_period}. This gives at most "
+                "one full season. Consider using more data "
+                "for a meaningful seasonal comparison.",
+                stacklevel=3,
+            )
+
+
+# =====================================================================
+# Main computation entry point
+# =====================================================================
+
+
+def _compute_seasonal_data(
+    df: pd.DataFrame,
+    time_col: str,
+    value_col: str,
+    period: str | int,
+    base_freq: str | None,
+) -> pd.DataFrame:
+    """Compute season identity and within-season positions.
+
+    Sorts by ``time_col``, assigns ``_season_id`` (str) and
+    ``_position`` (1-based int) columns, checks data sufficiency,
+    and warns about missing ``value_col`` values.
+
+    Returns:
+        A copy of *df* sorted by *time_col* with ``_season_id``
+        and ``_position`` columns appended.
+    """
+    pdf = df.sort_values(time_col).reset_index(drop=True)
+
+    # Warn about missing value_col values
+    na_count = pdf[value_col].isna().sum()
+    if na_count > 0:
+        warnings.warn(
+            f"value_col '{value_col}' contains "
+            f"{int(na_count)} missing value(s). "
+            "These will appear as gaps in the plot.",
+            stacklevel=2,
+        )
+
+    is_datetime = _is_datetime_time_col(pdf, time_col)
+
+    if isinstance(period, str):
+        result = _assign_calendar_seasons(pdf, time_col, period)
+    elif is_datetime:
+        resolved = _resolve_base_freq(pdf, time_col, base_freq)
+        result = _assign_frequency_seasons(pdf, time_col, period, resolved)
+    else:
+        result = _assign_positional_seasons(pdf, period)
+
+    _check_data_sufficiency(result, period)
+
+    return result
