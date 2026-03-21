@@ -9,7 +9,21 @@ import numpy as np
 import pandas as pd
 from statsmodels.tsa.stattools import acf as _sm_acf, pacf as _sm_pacf
 
-from tsbricks.blocks.utils import convert_to_pandas
+from tsbricks.blocks.utils import (
+    _DPI as _DPI,
+    convert_to_pandas,
+    pixels_to_figsize,
+    validate_backend,
+    validate_column_exists,
+    validate_dataframe,
+    validate_dimensions,
+    validate_min_rows,
+    validate_no_duplicates,
+    validate_no_missing_values,
+    validate_not_empty,
+    validate_time_col_dtype,
+    validate_value_col_dtype,
+)
 
 if TYPE_CHECKING:
     import matplotlib.figure as mpl_fig
@@ -26,7 +40,6 @@ else:
 _Z_SCORE_95 = 1.96
 _COLOR_PRIMARY = "#1f77b4"
 _COLOR_SECONDARY = "#ff7f0e"
-_DPI = 100
 _LINEWIDTH_PRIMARY = 1
 
 
@@ -366,35 +379,25 @@ def _validate_residual_inputs(
     height: int,
 ) -> None:
     """Validate input parameters."""
+    validate_min_rows(df, 2)
 
-    if len(df) < 2:
-        raise ValueError(f"DataFrame must have at least 2 rows, got {len(df)}.")
+    for col_name, label in [
+        (time_col, "time_col"),
+        (actual_col, "actual_col"),
+        (fitted_col, "fitted_col"),
+    ]:
+        validate_column_exists(df, col_name, label)
 
+    # Check for NaN values across all columns at once
     cols_list = [time_col, actual_col, fitted_col]
-
-    # Check columns exist
-    missing_cols_list = [col for col in cols_list if col not in df.columns]
-
-    if missing_cols_list:
-        raise ValueError(
-            f"Column(s) {missing_cols_list} not found in DataFrame. "
-            f"Available columns: {df.columns.tolist()}"
-        )
-
-    # Check for NaN values
     na_counts = df[cols_list].isna().sum()
     has_na = na_counts[na_counts > 0]
     if len(has_na) > 0:
         details = ", ".join(f"{col}={int(count)}" for col, count in has_na.items())
         raise ValueError(f"NaN values found (column=count): {details}")
 
-    # Check backend
-    if backend not in ("plotly", "matplotlib"):
-        raise ValueError(
-            f"Invalid backend '{backend}'. Must be 'plotly' or 'matplotlib'."
-        )
+    validate_backend(backend)
 
-    # Check dimensions
     if width <= 0:
         raise ValueError(f"width must be positive, got {width}.")
     if height <= 0:
@@ -417,88 +420,25 @@ def _validate_acf_pacf_inputs(
     duplicates, and parameter constraints. Converts Polars to pandas
     internally before column-level checks.
     """
-    from tsbricks.blocks.utils import _is_pandas_df, _is_polars_df
-
-    # --- DataFrame type ---
-    if not (_is_pandas_df(df) or _is_polars_df(df)):
-        raise TypeError(
-            f"df must be a pandas or Polars DataFrame, got {type(df).__name__}."
-        )
-
-    # Convert to pandas for uniform validation
+    validate_dataframe(df)
     pdf = convert_to_pandas(df)
 
-    # --- Empty / too-small ---
-    if len(pdf) == 0:
-        raise ValueError("DataFrame must not be empty.")
-    if len(pdf) < 2:
-        raise ValueError(f"DataFrame must have at least 2 rows, got {len(pdf)}.")
+    validate_not_empty(pdf)
+    validate_min_rows(pdf, 2)
 
-    # --- Column existence ---
     for col_name, label in [(time_col, "time_col"), (value_col, "value_col")]:
-        if col_name not in pdf.columns:
-            raise ValueError(
-                f"{label} '{col_name}' not found in DataFrame. "
-                f"Available columns: {pdf.columns.tolist()}"
-            )
+        validate_column_exists(pdf, col_name, label)
 
-    # --- time_col dtype: must be datetime-like or integer ---
-    time_dtype = pdf[time_col].dtype
-    is_datetime = pd.api.types.is_datetime64_any_dtype(time_dtype)
-    is_integer = pd.api.types.is_integer_dtype(time_dtype)
-    if not (is_datetime or is_integer):
-        # Object columns may hold Python datetime objects (e.g. from databases
-        # or timezone-aware datetimes stored as object dtype).  Use pandas
-        # value-level inference to accept these while still rejecting strings,
-        # categoricals, and other non-datetime object columns.
-        inferred = pd.api.types.infer_dtype(pdf[time_col], skipna=True)
-        if inferred not in ("datetime", "datetime64", "date"):
-            raise ValueError(
-                f"time_col '{time_col}' must be datetime-like or integer dtype, "
-                f"got {time_dtype}."
-            )
+    validate_time_col_dtype(pdf, time_col)
+    validate_value_col_dtype(pdf, value_col)
 
-    # --- value_col dtype: must be real numeric (not complex) ---
-    value_dtype = pdf[value_col].dtype
-    if not pd.api.types.is_numeric_dtype(value_dtype) or pd.api.types.is_complex_dtype(
-        value_dtype
-    ):
-        raise ValueError(f"value_col '{value_col}' must be numeric, got {value_dtype}.")
+    validate_no_missing_values(pdf, time_col, "time_col")
+    validate_no_missing_values(pdf, value_col, "value_col")
 
-    # --- Missing values ---
-    time_na = pdf[time_col].isna().sum()
-    if time_na > 0:
-        raise ValueError(
-            f"time_col '{time_col}' contains {int(time_na)} missing value(s)."
-        )
-    value_na = pdf[value_col].isna().sum()
-    if value_na > 0:
-        raise ValueError(
-            f"value_col '{value_col}' contains {int(value_na)} missing value(s)."
-        )
+    validate_no_duplicates(pdf, time_col, "time_col")
 
-    # --- Duplicate time values ---
-    n_dups = pdf[time_col].duplicated().sum()
-    if n_dups > 0:
-        raise ValueError(
-            f"time_col '{time_col}' contains {int(n_dups)} duplicate value(s)."
-        )
-
-    # --- backend ---
-    if backend not in ("plotly", "matplotlib"):
-        raise ValueError(
-            f"Invalid backend '{backend}'. Must be 'plotly' or 'matplotlib'."
-        )
-
-    # --- width / height: strict integer type + positive ---
-    for param_name, param_val in [("width", width), ("height", height)]:
-        if isinstance(param_val, bool) or not isinstance(param_val, (int, np.integer)):
-            raise TypeError(
-                f"{param_name} must be a positive integer, "
-                f"got {type(param_val).__name__}."
-            )
-        if param_val <= 0:
-            raise ValueError(f"{param_name} must be positive, got {param_val}.")
+    validate_backend(backend)
+    validate_dimensions(width, height)
 
     # --- alpha: 0 < alpha < 1 ---
     if not (0 < alpha < 1):
@@ -649,7 +589,7 @@ def _plot_acf_pacf_matplotlib(
     """Render a lollipop-style ACF/PACF plot with matplotlib."""
     import matplotlib.pyplot as plt
 
-    figsize = (width / _DPI, height / _DPI)
+    figsize = pixels_to_figsize(width, height)
     fig, ax = plt.subplots(figsize=figsize, dpi=_DPI)
 
     lags = result.lags
@@ -758,7 +698,7 @@ def _plot_matplotlib(
     """Create diagnostic plot using matplotlib."""
     import matplotlib.pyplot as plt
 
-    figsize = (width / _DPI, height / _DPI)
+    figsize = pixels_to_figsize(width, height)
 
     fig = plt.figure(figsize=figsize, dpi=_DPI)
 
