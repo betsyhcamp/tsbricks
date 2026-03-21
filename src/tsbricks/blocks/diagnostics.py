@@ -175,7 +175,8 @@ def plot_residual_diagnostics(
         ValueError: If required columns are missing, contain NaN values,
             or if invalid parameters are provided.
     """
-    # Convert polars to pandas if needed
+    # Validate DataFrame type, then convert polars to pandas if needed
+    validate_dataframe(df)
     df = convert_to_pandas(df)
 
     # Validate inputs
@@ -397,11 +398,7 @@ def _validate_residual_inputs(
         raise ValueError(f"NaN values found (column=count): {details}")
 
     validate_backend(backend)
-
-    if width <= 0:
-        raise ValueError(f"width must be positive, got {width}.")
-    if height <= 0:
-        raise ValueError(f"height must be positive, got {height}.")
+    validate_dimensions(width, height)
 
 
 def _validate_acf_pacf_inputs(
