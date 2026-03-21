@@ -203,6 +203,49 @@ def test_validate_residual_inputs_nonpositive_height(diag_df):
         )
 
 
+def test_validate_residual_inputs_width_float_type(diag_df):
+    """Raises TypeError when width is a float."""
+    with pytest.raises(TypeError, match="width must be a positive integer"):
+        _validate_residual_inputs(
+            diag_df, "time", "actual", "fitted", "plotly", 800.0, 600
+        )
+
+
+def test_validate_residual_inputs_height_float_type(diag_df):
+    """Raises TypeError when height is a float."""
+    with pytest.raises(TypeError, match="height must be a positive integer"):
+        _validate_residual_inputs(
+            diag_df, "time", "actual", "fitted", "plotly", 800, 600.0
+        )
+
+
+def test_validate_residual_inputs_width_bool_rejected(diag_df):
+    """Raises TypeError when width is a bool."""
+    with pytest.raises(TypeError, match="width must be a positive integer"):
+        _validate_residual_inputs(
+            diag_df, "time", "actual", "fitted", "plotly", True, 600
+        )
+
+
+def test_validate_residual_inputs_height_bool_rejected(diag_df):
+    """Raises TypeError when height is a bool."""
+    with pytest.raises(TypeError, match="height must be a positive integer"):
+        _validate_residual_inputs(
+            diag_df, "time", "actual", "fitted", "plotly", 800, True
+        )
+
+
+def test_residual_diagnostics_rejects_non_dataframe():
+    """Raises TypeError for non-DataFrame input."""
+    with pytest.raises(TypeError, match="pandas or Polars DataFrame"):
+        plot_residual_diagnostics(
+            {"time": [1, 2], "actual": [1.0, 2.0], "fitted": [1.0, 2.0]},
+            "time",
+            "actual",
+            "fitted",
+        )
+
+
 # =====================================================================
 # _plot_matplotlib
 # =====================================================================
