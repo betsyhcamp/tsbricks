@@ -30,7 +30,7 @@ _DEFAULTS = dict(
     width=800,
     height=450,
     alpha=0.8,
-    palette="magma",
+    palette="viridis",
     base_freq=None,
 )
 
@@ -145,7 +145,7 @@ def test_validate_seasonal_happy_path_datetime_int_period_with_base_freq(
         width=800,
         height=450,
         alpha=0.8,
-        palette="magma",
+        palette="viridis",
         base_freq="MS",
     )
 
@@ -168,7 +168,7 @@ def test_validate_seasonal_happy_path_matplotlib(seasonal_df_datetime):
         width=800,
         height=450,
         alpha=0.8,
-        palette="magma",
+        palette="viridis",
         base_freq=None,
     )
 
@@ -332,7 +332,7 @@ def test_validate_seasonal_base_freq_with_integer_time_col(seasonal_df_integer):
             width=800,
             height=450,
             alpha=0.8,
-            palette="magma",
+            palette="viridis",
             base_freq="D",
         )
 
@@ -351,7 +351,7 @@ def test_validate_seasonal_base_freq_with_named_period(seasonal_df_datetime):
             width=800,
             height=450,
             alpha=0.8,
-            palette="magma",
+            palette="viridis",
             base_freq="MS",
         )
 
@@ -368,7 +368,7 @@ def test_validate_seasonal_unsupported_base_freq(seasonal_df_datetime):
             width=800,
             height=450,
             alpha=0.8,
-            palette="magma",
+            palette="viridis",
             base_freq="min",
         )
 
@@ -385,7 +385,7 @@ def test_validate_seasonal_all_supported_base_freqs(seasonal_df_datetime):
             width=800,
             height=450,
             alpha=0.8,
-            palette="magma",
+            palette="viridis",
             base_freq=freq,
         )
 
@@ -435,7 +435,7 @@ def test_validate_seasonal_alpha_zero(seasonal_df_integer):
         width=800,
         height=450,
         alpha=0.0,
-        palette="magma",
+        palette="viridis",
         base_freq=None,
     )
 
@@ -451,7 +451,7 @@ def test_validate_seasonal_alpha_one(seasonal_df_integer):
         width=800,
         height=450,
         alpha=1.0,
-        palette="magma",
+        palette="viridis",
         base_freq=None,
     )
 
@@ -468,7 +468,7 @@ def test_validate_seasonal_alpha_negative(seasonal_df_integer):
             width=800,
             height=450,
             alpha=-0.1,
-            palette="magma",
+            palette="viridis",
             base_freq=None,
         )
 
@@ -485,7 +485,7 @@ def test_validate_seasonal_alpha_above_one(seasonal_df_integer):
             width=800,
             height=450,
             alpha=1.1,
-            palette="magma",
+            palette="viridis",
             base_freq=None,
         )
 
@@ -561,7 +561,7 @@ def test_validate_seasonal_invalid_backend(seasonal_df_integer):
             width=800,
             height=450,
             alpha=0.8,
-            palette="magma",
+            palette="viridis",
             base_freq=None,
         )
 
@@ -578,7 +578,7 @@ def test_validate_seasonal_width_float_type(seasonal_df_integer):
             width=800.0,
             height=450,
             alpha=0.8,
-            palette="magma",
+            palette="viridis",
             base_freq=None,
         )
 
@@ -595,7 +595,7 @@ def test_validate_seasonal_height_nonpositive(seasonal_df_integer):
             width=800,
             height=0,
             alpha=0.8,
-            palette="magma",
+            palette="viridis",
             base_freq=None,
         )
 
