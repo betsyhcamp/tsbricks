@@ -55,6 +55,27 @@ _SUPPORTED_BASE_FREQS = frozenset(
 )
 
 
+# Anchored aliases that pd.infer_freq() can return (e.g. "QE-DEC", "YS-JAN").
+# We strip the anchor suffix to map back to the unanchored base form.
+_ANCHORED_PREFIXES = ("QS-", "QE-", "YS-", "YE-", "W-")
+
+
+def _normalize_freq(freq: str) -> str:
+    """Normalize an anchored frequency alias to its unanchored base form.
+
+    For example, ``'QE-DEC'`` becomes ``'QE'`` and ``'YS-JAN'`` becomes
+    ``'YS'``.  Weekly anchored forms like ``'W-MON'`` are returned as-is
+    because ``_SUPPORTED_BASE_FREQS`` already includes them.
+    """
+    for prefix in _ANCHORED_PREFIXES:
+        if freq.startswith(prefix):
+            # Weekly anchored forms are already supported directly
+            if prefix == "W-":
+                return freq
+            return prefix.rstrip("-")
+    return freq
+
+
 def _is_datetime_time_col(df: pd.DataFrame, time_col: str) -> bool:
     """Check if time_col is datetime-like (including object-dtype datetimes)."""
     time_dtype = df[time_col].dtype
@@ -194,7 +215,8 @@ def _validate_base_freq(
             f"Supported values: {sorted(_SUPPORTED_BASE_FREQS)}."
         )
 
-    if inferred not in _SUPPORTED_BASE_FREQS:
+    normalized = _normalize_freq(inferred)
+    if normalized not in _SUPPORTED_BASE_FREQS:
         raise ValueError(
             f"Inferred frequency '{inferred}' is not supported. "
             "Please provide base_freq explicitly. "
@@ -244,7 +266,7 @@ def _resolve_base_freq(
     if base_freq is not None:
         return base_freq
     sorted_times = df[time_col].sort_values()
-    return pd.infer_freq(sorted_times)
+    return _normalize_freq(pd.infer_freq(sorted_times))
 
 
 def _assign_calendar_seasons(
@@ -668,6 +690,8 @@ def plot_seasonal(
         fig = _plot_seasonal_plotly(
             data, time_col, value_col, colors, alpha, width, height
         )
+        if return_fig:
+            return fig
         fig.show()
     else:
         import matplotlib.pyplot as plt
@@ -675,8 +699,7 @@ def plot_seasonal(
         fig = _plot_seasonal_matplotlib(
             data, time_col, value_col, colors, alpha, width, height
         )
+        if return_fig:
+            return fig
         plt.show()
-
-    if return_fig:
-        return fig
     return None
