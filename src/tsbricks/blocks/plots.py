@@ -9,7 +9,9 @@ import numpy as np
 import pandas as pd
 
 from tsbricks.blocks.utils import (
+    _DPI,
     convert_to_pandas,
+    pixels_to_figsize,
     validate_backend,
     validate_column_exists,
     validate_dataframe,
@@ -418,3 +420,184 @@ def _compute_seasonal_data(
     _check_data_sufficiency(result, period)
 
     return result
+
+
+# =====================================================================
+# Palette / color sampling
+# =====================================================================
+
+_VIRIDIS_UPPER = 0.92  # exclude lightest 8%
+
+_LINEWIDTH = 1.5
+_MARKER_SIZE_PLOTLY = 5
+_MARKER_SIZE_MPL = 12  # matplotlib uses area (s), so 12 ≈ ~3.5 px diameter
+
+
+def _sample_colors(
+    palette: str | list,
+    n: int,
+    backend: str,
+) -> list[str]:
+    """Return *n* colors from *palette* using the given backend.
+
+    If *palette* is a list, validate length and return it directly.
+    If *palette* is a named colormap string, sample *n* evenly-spaced
+    colors using the backend's native colormap support.  For viridis,
+    the lightest 8% of the range is excluded; all other colormaps use
+    the full range.
+
+    Returns rgb() strings for plotly, hex strings for matplotlib.
+    """
+    if isinstance(palette, list):
+        if len(palette) < n:
+            raise ValueError(
+                f"palette list has {len(palette)} color(s), "
+                f"but {n} season(s) require at least {n}."
+            )
+        return palette[:n]
+
+    upper = _VIRIDIS_UPPER if palette == "viridis" else 1.0
+    positions = np.linspace(0.0, upper, n).tolist()
+
+    if backend == "plotly":
+        return _sample_colors_plotly(palette, positions)
+    return _sample_colors_matplotlib(palette, positions)
+
+
+def _sample_colors_plotly(palette: str, positions: list[float]) -> list[str]:
+    """Sample colors from a Plotly colorscale."""
+    import plotly.colors as pc
+    from _plotly_utils.exceptions import PlotlyError
+
+    try:
+        return pc.sample_colorscale(palette, positions, colortype="rgb")
+    except (ValueError, PlotlyError):
+        raise ValueError(
+            f"Unknown colorscale '{palette}'. "
+            "Pass a valid plotly colorscale name or a list of colors."
+        ) from None
+
+
+def _sample_colors_matplotlib(palette: str, positions: list[float]) -> list[str]:
+    """Sample colors from a Matplotlib colormap."""
+    import matplotlib as mpl
+    import matplotlib.colors as mcolors
+
+    try:
+        cmap = mpl.colormaps[palette]
+    except KeyError:
+        raise ValueError(
+            f"Unknown colormap '{palette}'. "
+            "Pass a valid matplotlib colormap name or a list of colors."
+        ) from None
+
+    return [mcolors.to_hex(cmap(p)) for p in positions]
+
+
+# =====================================================================
+# Plotly backend
+# =====================================================================
+
+
+def _plot_seasonal_plotly(
+    data: pd.DataFrame,
+    time_col: str,
+    value_col: str,
+    colors: list[str],
+    alpha: float,
+    width: int,
+    height: int,
+) -> object:
+    """Build a seasonal line plot with Plotly.
+
+    *data* must contain ``_season_id`` and ``_position`` columns.
+    *colors* must have one entry per unique season, in chronological order.
+    """
+    import plotly.graph_objects as go
+
+    seasons = list(dict.fromkeys(data["_season_id"]))  # unique, preserving order
+
+    fig = go.Figure()
+    for season, color in zip(seasons, colors):
+        mask = data["_season_id"] == season
+        fig.add_trace(
+            go.Scatter(
+                x=data.loc[mask, "_position"],
+                y=data.loc[mask, value_col],
+                mode="lines+markers",
+                name=season,
+                line=dict(color=color, width=_LINEWIDTH),
+                marker=dict(color=color, size=_MARKER_SIZE_PLOTLY),
+                opacity=alpha,
+                connectgaps=False,
+            )
+        )
+
+    fig.update_layout(
+        width=width,
+        height=height,
+        xaxis_title=f"time ({time_col})",
+        yaxis_title=value_col,
+        title=None,
+        showlegend=True,
+        legend=dict(x=1.01, y=1, xanchor="left", yanchor="top"),
+        margin=dict(l=60, r=120, t=30, b=60),
+    )
+
+    return fig
+
+
+# =====================================================================
+# Matplotlib backend
+# =====================================================================
+
+
+def _plot_seasonal_matplotlib(
+    data: pd.DataFrame,
+    time_col: str,
+    value_col: str,
+    colors: list[str],
+    alpha: float,
+    width: int,
+    height: int,
+) -> object:
+    """Build a seasonal line plot with Matplotlib.
+
+    *data* must contain ``_season_id`` and ``_position`` columns.
+    *colors* must have one entry per unique season, in chronological order.
+    """
+    import matplotlib.pyplot as plt
+
+    figsize = pixels_to_figsize(width, height)
+    fig, ax = plt.subplots(figsize=figsize, dpi=_DPI)
+
+    seasons = list(dict.fromkeys(data["_season_id"]))
+
+    for season, color in zip(seasons, colors):
+        mask = data["_season_id"] == season
+        ax.plot(
+            data.loc[mask, "_position"].values,
+            data.loc[mask, value_col].values,
+            marker="o",
+            markersize=3.5,
+            linewidth=_LINEWIDTH,
+            color=color,
+            alpha=alpha,
+            label=season,
+        )
+
+    ax.set_xlabel(f"time ({time_col})")
+    ax.set_ylabel(value_col)
+
+    # Right-side legend outside plot
+    ax.legend(
+        loc="upper left",
+        bbox_to_anchor=(1.01, 1),
+        borderaxespad=0,
+    )
+
+    for spine in ax.spines.values():
+        spine.set_color("black")
+
+    fig.tight_layout()
+    return fig
