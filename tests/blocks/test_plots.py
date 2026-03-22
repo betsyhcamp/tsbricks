@@ -15,6 +15,7 @@ from tsbricks.blocks.plots import (
     _check_data_sufficiency,
     _compute_seasonal_data,
     _is_datetime_time_col,
+    _normalize_freq,
     _plot_seasonal_matplotlib,
     _plot_seasonal_plotly,
     _resolve_base_freq,
@@ -1697,3 +1698,133 @@ def test_plot_seasonal_missing_column_raises():
     df = pd.DataFrame({"time": dates, "value": range(36)})
     with pytest.raises(ValueError, match="not found"):
         plot_seasonal(df, "time", "nonexistent", "year")
+
+
+# =====================================================================
+# return_fig=True suppresses rendering
+# =====================================================================
+
+
+def test_plot_seasonal_return_fig_true_no_show_called(
+    seasonal_df_datetime, monkeypatch
+):
+    """return_fig=True returns figure without calling fig.show()."""
+    show_calls = []
+    monkeypatch.setattr(
+        "plotly.graph_objects.Figure.show",
+        lambda self: show_calls.append(1),
+    )
+    fig = plot_seasonal(seasonal_df_datetime, "time", "value", "year", return_fig=True)
+    assert fig is not None
+    assert len(show_calls) == 0
+
+
+def test_plot_seasonal_return_fig_false_calls_show(seasonal_df_datetime, monkeypatch):
+    """return_fig=False calls fig.show() exactly once."""
+    show_calls = []
+    monkeypatch.setattr(
+        "plotly.graph_objects.Figure.show",
+        lambda self: show_calls.append(1),
+    )
+    result = plot_seasonal(
+        seasonal_df_datetime, "time", "value", "year", return_fig=False
+    )
+    assert result is None
+    assert len(show_calls) == 1
+
+
+def test_plot_seasonal_matplotlib_return_fig_true_no_show_called(
+    seasonal_df_datetime, monkeypatch
+):
+    """return_fig=True with matplotlib returns figure without plt.show()."""
+    show_calls = []
+    monkeypatch.setattr("matplotlib.pyplot.show", lambda: show_calls.append(1))
+    fig = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="matplotlib",
+        return_fig=True,
+    )
+    assert fig is not None
+    assert len(show_calls) == 0
+
+
+def test_plot_seasonal_matplotlib_return_fig_false_calls_show(
+    seasonal_df_datetime, monkeypatch
+):
+    """return_fig=False with matplotlib calls plt.show() exactly once."""
+    show_calls = []
+    monkeypatch.setattr("matplotlib.pyplot.show", lambda: show_calls.append(1))
+    result = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="matplotlib",
+        return_fig=False,
+    )
+    assert result is None
+    assert len(show_calls) == 1
+
+
+# =====================================================================
+# _normalize_freq — anchored alias normalization
+# =====================================================================
+
+
+def test_normalize_freq_unanchored_passthrough():
+    """Unanchored aliases pass through unchanged."""
+    for freq in ("D", "h", "MS", "ME", "QS", "QE", "YS", "YE"):
+        assert _normalize_freq(freq) == freq
+
+
+def test_normalize_freq_anchored_quarterly():
+    """Anchored quarterly aliases normalize to unanchored form."""
+    assert _normalize_freq("QE-DEC") == "QE"
+    assert _normalize_freq("QE-MAR") == "QE"
+    assert _normalize_freq("QS-JAN") == "QS"
+    assert _normalize_freq("QS-APR") == "QS"
+
+
+def test_normalize_freq_anchored_yearly():
+    """Anchored yearly aliases normalize to unanchored form."""
+    assert _normalize_freq("YE-DEC") == "YE"
+    assert _normalize_freq("YS-JAN") == "YS"
+    assert _normalize_freq("YS-JUL") == "YS"
+
+
+def test_normalize_freq_weekly_anchored_preserved():
+    """Weekly anchored aliases are preserved (already in supported set)."""
+    assert _normalize_freq("W-MON") == "W-MON"
+    assert _normalize_freq("W-SUN") == "W-SUN"
+    assert _normalize_freq("W-FRI") == "W-FRI"
+
+
+def test_validate_base_freq_accepts_anchored_quarterly_inference():
+    """Validation passes for quarterly data where infer_freq returns anchored alias."""
+    dates = pd.date_range("2020-01-01", periods=12, freq="QE-DEC")
+    df = pd.DataFrame({"time": dates, "value": range(12)})
+    # Should not raise — anchored 'QE-DEC' is normalized to 'QE'
+    _validate_seasonal_inputs(
+        df, "time", "value", 4, "plotly", 800, 450, 0.8, "viridis", None
+    )
+
+
+def test_validate_base_freq_accepts_anchored_yearly_inference():
+    """Validation passes for yearly data where infer_freq returns anchored alias."""
+    dates = pd.date_range("2015-01-01", periods=10, freq="YS-JAN")
+    df = pd.DataFrame({"time": dates, "value": range(10)})
+    # Should not raise — anchored 'YS-JAN' is normalized to 'YS'
+    _validate_seasonal_inputs(
+        df, "time", "value", 5, "plotly", 800, 450, 0.8, "viridis", None
+    )
+
+
+def test_resolve_base_freq_normalizes_anchored(seasonal_df_datetime):
+    """_resolve_base_freq returns normalized (unanchored) frequency."""
+    dates = pd.date_range("2020-01-01", periods=12, freq="QE-DEC")
+    df = pd.DataFrame({"time": dates, "value": range(12)})
+    resolved = _resolve_base_freq(df, "time", None)
+    assert resolved == "QE"
