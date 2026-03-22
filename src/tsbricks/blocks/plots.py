@@ -601,3 +601,82 @@ def _plot_seasonal_matplotlib(
 
     fig.tight_layout()
     return fig
+
+
+# =====================================================================
+# Public API
+# =====================================================================
+
+
+def plot_seasonal(
+    df: DataFrameLike,
+    time_col: str,
+    value_col: str,
+    period: str | int,
+    backend: str = "plotly",
+    width: int = 800,
+    height: int = 450,
+    palette: str | list = "viridis",
+    base_freq: str | None = None,
+    return_fig: bool = False,
+    alpha: float = 0.8,
+) -> object | None:
+    """Plot a seasonal decomposition of a single time series.
+
+    Each line represents one season, with the x-axis showing
+    within-season observation position (1, 2, 3, ...).
+
+    Args:
+        df: pandas or Polars DataFrame containing the time series.
+        time_col: Column name for the time axis (datetime-like or integer).
+        value_col: Column name for the values (numeric).
+        period: Season length. Named string (``"year"``, ``"quarter"``,
+            ``"month"``, ``"week"`` or aliases ``"Y"``, ``"Q"``, ``"M"``,
+            ``"W"``) for calendar-aligned grouping, or an integer >= 2.
+        backend: Plotting backend — ``"plotly"`` or ``"matplotlib"``.
+        width: Figure width in pixels.
+        height: Figure height in pixels.
+        palette: Named colormap string or list of colors.
+        base_freq: Pandas frequency alias. Required when *time_col* is
+            datetime-like and *period* is an integer; inferred if omitted.
+        return_fig: If True, return the native figure object after rendering.
+        alpha: Opacity for lines and markers (0–1).
+
+    Returns:
+        The native figure object if *return_fig* is True, otherwise None.
+    """
+    _validate_seasonal_inputs(
+        df,
+        time_col,
+        value_col,
+        period,
+        backend,
+        width,
+        height,
+        alpha,
+        palette,
+        base_freq,
+    )
+
+    pdf = convert_to_pandas(df)
+    data = _compute_seasonal_data(pdf, time_col, value_col, period, base_freq)
+
+    n_seasons = data["_season_id"].nunique()
+    colors = _sample_colors(palette, n_seasons, backend)
+
+    if backend == "plotly":
+        fig = _plot_seasonal_plotly(
+            data, time_col, value_col, colors, alpha, width, height
+        )
+        fig.show()
+    else:
+        import matplotlib.pyplot as plt
+
+        fig = _plot_seasonal_matplotlib(
+            data, time_col, value_col, colors, alpha, width, height
+        )
+        plt.show()
+
+    if return_fig:
+        return fig
+    return None

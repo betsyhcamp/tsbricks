@@ -20,6 +20,7 @@ from tsbricks.blocks.plots import (
     _resolve_base_freq,
     _sample_colors,
     _validate_seasonal_inputs,
+    plot_seasonal,
     _NAMED_PERIODS,
     _SUPPORTED_BASE_FREQS,
     _VIRIDIS_UPPER,
@@ -1356,3 +1357,343 @@ def test_plot_seasonal_matplotlib_alpha(seasonal_plot_data):
     for line in ax.lines:
         assert line.get_alpha() == 0.5
     plt.close(fig)
+
+
+# =====================================================================
+# plot_seasonal — shared fixture for suppressing interactive rendering
+# =====================================================================
+
+
+@pytest.fixture
+def no_show(monkeypatch):
+    """Prevent fig.show() and plt.show() from opening interactive windows."""
+    monkeypatch.setattr("plotly.graph_objects.Figure.show", lambda self: None)
+    monkeypatch.setattr("matplotlib.pyplot.show", lambda: None)
+
+
+# =====================================================================
+# plot_seasonal — public API integration tests (plotly)
+# =====================================================================
+
+
+def test_plot_seasonal_plotly_return_fig_true(seasonal_df_datetime, no_show):
+    """return_fig=True returns a Plotly Figure."""
+    import plotly.graph_objects as go
+
+    fig = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        return_fig=True,
+    )
+    assert isinstance(fig, go.Figure)
+
+
+def test_plot_seasonal_plotly_return_fig_false(seasonal_df_datetime, no_show):
+    """return_fig=False returns None."""
+    result = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        return_fig=False,
+    )
+    assert result is None
+
+
+def test_plot_seasonal_plotly_named_period_year(seasonal_df_datetime, no_show):
+    """End-to-end with named period='year'."""
+    fig = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        return_fig=True,
+    )
+    assert len(fig.data) == 3  # 3 years
+
+
+def test_plot_seasonal_plotly_named_period_month(seasonal_df_datetime, no_show):
+    """End-to-end with named period='month'."""
+    fig = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "month",
+        return_fig=True,
+    )
+    # 36 months → 36 unique month season IDs
+    assert len(fig.data) == 36
+
+
+def test_plot_seasonal_plotly_integer_period_positional(seasonal_df_integer, no_show):
+    """End-to-end with integer time_col and integer period."""
+    fig = plot_seasonal(
+        seasonal_df_integer,
+        "time",
+        "value",
+        5,
+        return_fig=True,
+    )
+    assert len(fig.data) == 4  # 20 obs / 5 = 4 seasons
+
+
+def test_plot_seasonal_plotly_integer_period_frequency_aligned(
+    seasonal_df_datetime,
+    no_show,
+):
+    """End-to-end with datetime time_col and integer period."""
+    fig = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        12,
+        base_freq="MS",
+        return_fig=True,
+    )
+    assert len(fig.data) == 3  # 36 months / 12 = 3 seasons
+
+
+def test_plot_seasonal_plotly_missing_values_warn_and_render(no_show):
+    """Missing values in value_col emit a warning and still render."""
+    dates = pd.date_range("2020-01-01", periods=36, freq="MS")
+    values = np.arange(36, dtype=float)
+    values[5] = np.nan
+    df = pd.DataFrame({"time": dates, "value": values})
+
+    with pytest.warns(UserWarning, match="missing value"):
+        fig = plot_seasonal(df, "time", "value", "year", return_fig=True)
+    assert len(fig.data) == 3
+
+
+def test_plot_seasonal_plotly_custom_palette_list(seasonal_df_datetime, no_show):
+    """Custom color list is applied to traces."""
+    colors = ["red", "green", "blue"]
+    fig = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        palette=colors,
+        return_fig=True,
+    )
+    for trace, expected in zip(fig.data, colors):
+        assert trace.line.color == expected
+
+
+def test_plot_seasonal_plotly_custom_alpha(seasonal_df_datetime, no_show):
+    """Custom alpha is applied to traces."""
+    fig = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        alpha=0.5,
+        return_fig=True,
+    )
+    for trace in fig.data:
+        assert trace.opacity == 0.5
+
+
+def test_plot_seasonal_plotly_custom_dimensions(seasonal_df_datetime, no_show):
+    """Custom width and height are applied."""
+    fig = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        width=600,
+        height=300,
+        return_fig=True,
+    )
+    assert fig.layout.width == 600
+    assert fig.layout.height == 300
+
+
+# =====================================================================
+# plot_seasonal — public API integration tests (matplotlib)
+# =====================================================================
+
+
+def test_plot_seasonal_matplotlib_return_fig_true(seasonal_df_datetime, no_show):
+    """return_fig=True returns a Matplotlib Figure."""
+    import matplotlib.figure
+    import matplotlib.pyplot as plt
+
+    fig = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="matplotlib",
+        return_fig=True,
+    )
+    assert isinstance(fig, matplotlib.figure.Figure)
+    plt.close(fig)
+
+
+def test_plot_seasonal_matplotlib_return_fig_false(seasonal_df_datetime, no_show):
+    """return_fig=False returns None."""
+    import matplotlib.pyplot as plt
+
+    result = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="matplotlib",
+        return_fig=False,
+    )
+    assert result is None
+    plt.close("all")
+
+
+def test_plot_seasonal_matplotlib_named_period_year(seasonal_df_datetime, no_show):
+    """End-to-end with named period='year' on matplotlib."""
+    import matplotlib.pyplot as plt
+
+    fig = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="matplotlib",
+        return_fig=True,
+    )
+    ax = fig.axes[0]
+    assert len(ax.lines) == 3
+    plt.close(fig)
+
+
+def test_plot_seasonal_matplotlib_integer_period(seasonal_df_integer, no_show):
+    """End-to-end with integer time_col and integer period on matplotlib."""
+    import matplotlib.pyplot as plt
+
+    fig = plot_seasonal(
+        seasonal_df_integer,
+        "time",
+        "value",
+        5,
+        backend="matplotlib",
+        return_fig=True,
+    )
+    ax = fig.axes[0]
+    assert len(ax.lines) == 4
+    plt.close(fig)
+
+
+def test_plot_seasonal_matplotlib_custom_alpha(seasonal_df_datetime, no_show):
+    """Custom alpha is applied to lines."""
+    import matplotlib.pyplot as plt
+
+    fig = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="matplotlib",
+        alpha=0.3,
+        return_fig=True,
+    )
+    ax = fig.axes[0]
+    for line in ax.lines:
+        assert line.get_alpha() == 0.3
+    plt.close(fig)
+
+
+# =====================================================================
+# plot_seasonal — Polars input
+# =====================================================================
+
+
+def test_plot_seasonal_polars_plotly(no_show):
+    """Polars DataFrame works end-to-end with plotly backend."""
+    pl = pytest.importorskip("polars")
+    import plotly.graph_objects as go
+
+    dates = pd.date_range("2020-01-01", periods=36, freq="MS")
+    df_pl = pl.DataFrame(
+        {
+            "time": dates.to_list(),
+            "value": np.random.default_rng(42).normal(size=36).tolist(),
+        }
+    )
+
+    fig = plot_seasonal(df_pl, "time", "value", "year", return_fig=True)
+    assert isinstance(fig, go.Figure)
+    assert len(fig.data) == 3
+
+
+def test_plot_seasonal_polars_matplotlib(no_show):
+    """Polars DataFrame works end-to-end with matplotlib backend."""
+    pl = pytest.importorskip("polars")
+    import matplotlib.figure
+    import matplotlib.pyplot as plt
+
+    dates = pd.date_range("2020-01-01", periods=36, freq="MS")
+    df_pl = pl.DataFrame(
+        {
+            "time": dates.to_list(),
+            "value": np.random.default_rng(42).normal(size=36).tolist(),
+        }
+    )
+
+    fig = plot_seasonal(
+        df_pl,
+        "time",
+        "value",
+        "year",
+        backend="matplotlib",
+        return_fig=True,
+    )
+    assert isinstance(fig, matplotlib.figure.Figure)
+    plt.close(fig)
+
+
+# =====================================================================
+# plot_seasonal — error propagation
+# =====================================================================
+
+
+def test_plot_seasonal_empty_dataframe_raises():
+    """Empty DataFrame raises ValueError."""
+    df = pd.DataFrame(
+        {
+            "time": pd.Series(dtype="datetime64[ns]"),
+            "value": pd.Series(dtype="float64"),
+        }
+    )
+    with pytest.raises(ValueError, match="empty"):
+        plot_seasonal(df, "time", "value", "year")
+
+
+def test_plot_seasonal_insufficient_data_raises():
+    """Not enough data for one full season raises ValueError."""
+    df = pd.DataFrame({"time": range(3), "value": range(3)})
+    with pytest.raises(ValueError, match="Not enough data"):
+        plot_seasonal(df, "time", "value", 5)
+
+
+def test_plot_seasonal_invalid_backend_raises():
+    """Invalid backend raises ValueError."""
+    dates = pd.date_range("2020-01-01", periods=36, freq="MS")
+    df = pd.DataFrame({"time": dates, "value": range(36)})
+    with pytest.raises(ValueError, match="Invalid backend"):
+        plot_seasonal(df, "time", "value", "year", backend="seaborn")
+
+
+def test_plot_seasonal_invalid_period_type_raises():
+    """Invalid period type raises TypeError."""
+    dates = pd.date_range("2020-01-01", periods=36, freq="MS")
+    df = pd.DataFrame({"time": dates, "value": range(36)})
+    with pytest.raises(TypeError, match="period must be"):
+        plot_seasonal(df, "time", "value", 3.5)
+
+
+def test_plot_seasonal_missing_column_raises():
+    """Missing column raises ValueError."""
+    dates = pd.date_range("2020-01-01", periods=36, freq="MS")
+    df = pd.DataFrame({"time": dates, "value": range(36)})
+    with pytest.raises(ValueError, match="not found"):
+        plot_seasonal(df, "time", "nonexistent", "year")
