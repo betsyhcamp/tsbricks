@@ -15,10 +15,14 @@ from tsbricks.blocks.plots import (
     _check_data_sufficiency,
     _compute_seasonal_data,
     _is_datetime_time_col,
+    _plot_seasonal_matplotlib,
+    _plot_seasonal_plotly,
     _resolve_base_freq,
+    _sample_colors,
     _validate_seasonal_inputs,
     _NAMED_PERIODS,
     _SUPPORTED_BASE_FREQS,
+    _VIRIDIS_UPPER,
 )
 
 # =====================================================================
@@ -1004,3 +1008,351 @@ def test_compute_seasonal_data_sufficiency_error():
     df = pd.DataFrame({"time": range(3), "value": range(3)})
     with pytest.raises(ValueError, match="Not enough data"):
         _compute_seasonal_data(df, "time", "value", 5, None)
+
+
+# =====================================================================
+# _sample_colors — list palette (backend-independent)
+# =====================================================================
+
+
+def test_sample_colors_list_passthrough():
+    """Color list is returned directly when long enough."""
+    palette = ["red", "blue", "green", "orange", "purple"]
+    colors = _sample_colors(palette, 3, "plotly")
+    assert colors == ["red", "blue", "green"]
+
+
+def test_sample_colors_list_exact_length():
+    """Color list of exact length passes."""
+    palette = ["red", "blue", "green"]
+    colors = _sample_colors(palette, 3, "plotly")
+    assert colors == palette
+
+
+def test_sample_colors_list_too_short():
+    """Raises ValueError when color list has fewer colors than seasons."""
+    with pytest.raises(ValueError, match="2 color.*3 season"):
+        _sample_colors(["red", "blue"], 3, "plotly")
+
+
+def test_sample_colors_list_ignores_backend():
+    """List path works with either backend value."""
+    palette = ["red", "blue", "green"]
+    assert _sample_colors(palette, 2, "plotly") == ["red", "blue"]
+    assert _sample_colors(palette, 2, "matplotlib") == ["red", "blue"]
+
+
+# =====================================================================
+# _sample_colors — plotly backend
+# =====================================================================
+
+
+def test_sample_colors_plotly_viridis_count():
+    """Returns correct number of rgb() colors for viridis via plotly."""
+    colors = _sample_colors("viridis", 5, "plotly")
+    assert len(colors) == 5
+    assert all(c.startswith("rgb(") for c in colors)
+
+
+def test_sample_colors_plotly_viridis_excludes_lightest():
+    """Viridis samples stop at _VIRIDIS_UPPER (lightest 8% excluded) via plotly."""
+    import plotly.colors as pc
+
+    colors = _sample_colors("viridis", 10, "plotly")
+    expected_last = pc.sample_colorscale("viridis", [_VIRIDIS_UPPER], colortype="rgb")
+    assert colors[-1] == expected_last[0]
+
+
+def test_sample_colors_plotly_other_cmap_full_range():
+    """Non-viridis colormaps sample full [0, 1] range via plotly."""
+    import plotly.colors as pc
+
+    colors = _sample_colors("plasma", 10, "plotly")
+    expected_first = pc.sample_colorscale("plasma", [0.0], colortype="rgb")
+    expected_last = pc.sample_colorscale("plasma", [1.0], colortype="rgb")
+    assert colors[0] == expected_first[0]
+    assert colors[-1] == expected_last[0]
+
+
+def test_sample_colors_plotly_single_color():
+    """Sampling 1 color returns one element via plotly."""
+    colors = _sample_colors("viridis", 1, "plotly")
+    assert len(colors) == 1
+    assert colors[0].startswith("rgb(")
+
+
+def test_sample_colors_plotly_unknown_colorscale():
+    """Raises ValueError for unrecognized colorscale name via plotly."""
+    with pytest.raises(ValueError, match="Unknown colorscale"):
+        _sample_colors("not_a_real_colormap", 5, "plotly")
+
+
+# =====================================================================
+# _sample_colors — matplotlib backend
+# =====================================================================
+
+mpl = pytest.importorskip("matplotlib")
+
+
+def test_sample_colors_matplotlib_viridis_count():
+    """Returns correct number of hex colors for viridis via matplotlib."""
+    colors = _sample_colors("viridis", 5, "matplotlib")
+    assert len(colors) == 5
+    assert all(c.startswith("#") for c in colors)
+
+
+def test_sample_colors_matplotlib_viridis_excludes_lightest():
+    """Viridis samples stop at _VIRIDIS_UPPER (lightest 8% excluded) via matplotlib."""
+    import matplotlib as mpl
+    import matplotlib.colors as mcolors
+
+    colors = _sample_colors("viridis", 10, "matplotlib")
+    cmap = mpl.colormaps["viridis"]
+    last_color = mcolors.to_hex(cmap(_VIRIDIS_UPPER))
+    assert colors[-1] == last_color
+
+
+def test_sample_colors_matplotlib_other_cmap_full_range():
+    """Non-viridis colormaps sample the full [0, 1] range via matplotlib."""
+    import matplotlib as mpl
+    import matplotlib.colors as mcolors
+
+    colors = _sample_colors("plasma", 10, "matplotlib")
+    cmap = mpl.colormaps["plasma"]
+    assert colors[-1] == mcolors.to_hex(cmap(1.0))
+    assert colors[0] == mcolors.to_hex(cmap(0.0))
+
+
+def test_sample_colors_matplotlib_single_color():
+    """Sampling 1 color returns one element via matplotlib."""
+    colors = _sample_colors("viridis", 1, "matplotlib")
+    assert len(colors) == 1
+    assert colors[0].startswith("#")
+
+
+def test_sample_colors_matplotlib_unknown_colormap():
+    """Raises ValueError for unrecognized colormap name via matplotlib."""
+    with pytest.raises(ValueError, match="Unknown colormap"):
+        _sample_colors("not_a_real_colormap", 5, "matplotlib")
+
+
+# =====================================================================
+# _plot_seasonal_plotly
+# =====================================================================
+
+
+@pytest.fixture
+def seasonal_plot_data():
+    """Computed seasonal data ready for plotting (3 seasons of 5)."""
+    dates = pd.date_range("2020-01-01", periods=36, freq="MS")
+    df = pd.DataFrame(
+        {"time": dates, "value": np.random.default_rng(42).normal(size=36)}
+    )
+    return _compute_seasonal_data(df, "time", "value", "year", None)
+
+
+def test_plot_seasonal_plotly_returns_figure(seasonal_plot_data):
+    """Returns a Plotly Figure object."""
+    import plotly.graph_objects as go
+
+    colors = _sample_colors(
+        "viridis", seasonal_plot_data["_season_id"].nunique(), "plotly"
+    )
+    fig = _plot_seasonal_plotly(
+        seasonal_plot_data, "time", "value", colors, 0.8, 800, 450
+    )
+    assert isinstance(fig, go.Figure)
+
+
+def test_plot_seasonal_plotly_trace_count(seasonal_plot_data):
+    """One trace per season."""
+    n_seasons = seasonal_plot_data["_season_id"].nunique()
+    colors = _sample_colors("viridis", n_seasons, "plotly")
+    fig = _plot_seasonal_plotly(
+        seasonal_plot_data, "time", "value", colors, 0.8, 800, 450
+    )
+    assert len(fig.data) == n_seasons
+
+
+def test_plot_seasonal_plotly_trace_names(seasonal_plot_data):
+    """Trace names match season IDs in order."""
+    seasons = list(dict.fromkeys(seasonal_plot_data["_season_id"]))
+    colors = _sample_colors("viridis", len(seasons), "plotly")
+    fig = _plot_seasonal_plotly(
+        seasonal_plot_data, "time", "value", colors, 0.8, 800, 450
+    )
+    trace_names = [t.name for t in fig.data]
+    assert trace_names == seasons
+
+
+def test_plot_seasonal_plotly_axis_labels(seasonal_plot_data):
+    """X and Y axis labels follow the spec."""
+    colors = _sample_colors(
+        "viridis", seasonal_plot_data["_season_id"].nunique(), "plotly"
+    )
+    fig = _plot_seasonal_plotly(
+        seasonal_plot_data, "time", "value", colors, 0.8, 800, 450
+    )
+    assert fig.layout.xaxis.title.text == "time (time)"
+    assert fig.layout.yaxis.title.text == "value"
+
+
+def test_plot_seasonal_plotly_no_title(seasonal_plot_data):
+    """No plot title."""
+    colors = _sample_colors(
+        "viridis", seasonal_plot_data["_season_id"].nunique(), "plotly"
+    )
+    fig = _plot_seasonal_plotly(
+        seasonal_plot_data, "time", "value", colors, 0.8, 800, 450
+    )
+    assert fig.layout.title is None or fig.layout.title.text is None
+
+
+def test_plot_seasonal_plotly_dimensions(seasonal_plot_data):
+    """Width and height are set correctly."""
+    colors = _sample_colors(
+        "viridis", seasonal_plot_data["_season_id"].nunique(), "plotly"
+    )
+    fig = _plot_seasonal_plotly(
+        seasonal_plot_data, "time", "value", colors, 0.8, 600, 300
+    )
+    assert fig.layout.width == 600
+    assert fig.layout.height == 300
+
+
+def test_plot_seasonal_plotly_legend_visible(seasonal_plot_data):
+    """Legend is shown."""
+    colors = _sample_colors(
+        "viridis", seasonal_plot_data["_season_id"].nunique(), "plotly"
+    )
+    fig = _plot_seasonal_plotly(
+        seasonal_plot_data, "time", "value", colors, 0.8, 800, 450
+    )
+    assert fig.layout.showlegend is True
+
+
+def test_plot_seasonal_plotly_mode_lines_markers(seasonal_plot_data):
+    """All traces use lines+markers mode."""
+    colors = _sample_colors(
+        "viridis", seasonal_plot_data["_season_id"].nunique(), "plotly"
+    )
+    fig = _plot_seasonal_plotly(
+        seasonal_plot_data, "time", "value", colors, 0.8, 800, 450
+    )
+    for trace in fig.data:
+        assert trace.mode == "lines+markers"
+
+
+def test_plot_seasonal_plotly_missing_values_gaps():
+    """Missing value_col values create gaps (connectgaps=False)."""
+    dates = pd.date_range("2020-01-01", periods=24, freq="MS")
+    values = list(range(24))
+    values[5] = np.nan
+    df = pd.DataFrame({"time": dates, "value": values})
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        data = _compute_seasonal_data(df, "time", "value", "year", None)
+
+    colors = _sample_colors("viridis", data["_season_id"].nunique(), "plotly")
+    fig = _plot_seasonal_plotly(data, "time", "value", colors, 0.8, 800, 450)
+    for trace in fig.data:
+        assert trace.connectgaps is False
+
+
+# =====================================================================
+# _plot_seasonal_matplotlib
+# =====================================================================
+
+
+def test_plot_seasonal_matplotlib_returns_figure(seasonal_plot_data):
+    """Returns a Matplotlib Figure object."""
+    import matplotlib.figure
+
+    colors = _sample_colors(
+        "viridis", seasonal_plot_data["_season_id"].nunique(), "matplotlib"
+    )
+    fig = _plot_seasonal_matplotlib(
+        seasonal_plot_data, "time", "value", colors, 0.8, 800, 450
+    )
+    assert isinstance(fig, matplotlib.figure.Figure)
+    import matplotlib.pyplot as plt
+
+    plt.close(fig)
+
+
+def test_plot_seasonal_matplotlib_line_count(seasonal_plot_data):
+    """One line per season."""
+    import matplotlib.pyplot as plt
+
+    n_seasons = seasonal_plot_data["_season_id"].nunique()
+    colors = _sample_colors("viridis", n_seasons, "matplotlib")
+    fig = _plot_seasonal_matplotlib(
+        seasonal_plot_data, "time", "value", colors, 0.8, 800, 450
+    )
+    ax = fig.axes[0]
+    assert len(ax.lines) == n_seasons
+    plt.close(fig)
+
+
+def test_plot_seasonal_matplotlib_axis_labels(seasonal_plot_data):
+    """X and Y axis labels follow the spec."""
+    import matplotlib.pyplot as plt
+
+    colors = _sample_colors(
+        "viridis", seasonal_plot_data["_season_id"].nunique(), "matplotlib"
+    )
+    fig = _plot_seasonal_matplotlib(
+        seasonal_plot_data, "time", "value", colors, 0.8, 800, 450
+    )
+    ax = fig.axes[0]
+    assert ax.get_xlabel() == "time (time)"
+    assert ax.get_ylabel() == "value"
+    plt.close(fig)
+
+
+def test_plot_seasonal_matplotlib_legend_labels(seasonal_plot_data):
+    """Legend labels match season IDs."""
+    import matplotlib.pyplot as plt
+
+    seasons = list(dict.fromkeys(seasonal_plot_data["_season_id"]))
+    colors = _sample_colors("viridis", len(seasons), "matplotlib")
+    fig = _plot_seasonal_matplotlib(
+        seasonal_plot_data, "time", "value", colors, 0.8, 800, 450
+    )
+    ax = fig.axes[0]
+    legend_texts = [t.get_text() for t in ax.get_legend().get_texts()]
+    assert legend_texts == seasons
+    plt.close(fig)
+
+
+def test_plot_seasonal_matplotlib_dimensions(seasonal_plot_data):
+    """Figure size matches requested pixel dimensions."""
+    import matplotlib.pyplot as plt
+
+    colors = _sample_colors(
+        "viridis", seasonal_plot_data["_season_id"].nunique(), "matplotlib"
+    )
+    fig = _plot_seasonal_matplotlib(
+        seasonal_plot_data, "time", "value", colors, 0.8, 600, 300
+    )
+    w, h = fig.get_size_inches()
+    assert abs(w - 6.0) < 0.01  # 600 / 100 DPI
+    assert abs(h - 3.0) < 0.01  # 300 / 100 DPI
+    plt.close(fig)
+
+
+def test_plot_seasonal_matplotlib_alpha(seasonal_plot_data):
+    """Lines have the requested alpha."""
+    import matplotlib.pyplot as plt
+
+    colors = _sample_colors(
+        "viridis", seasonal_plot_data["_season_id"].nunique(), "matplotlib"
+    )
+    fig = _plot_seasonal_matplotlib(
+        seasonal_plot_data, "time", "value", colors, 0.5, 800, 450
+    )
+    ax = fig.axes[0]
+    for line in ax.lines:
+        assert line.get_alpha() == 0.5
+    plt.close(fig)
