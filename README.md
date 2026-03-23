@@ -15,6 +15,27 @@ The package is organized into three namespaces with a strict one-way dependency 
 - **`tsbricks.runner`** — Shared orchestration: transform chain execution, model invocation, serialization. Consumed by backtesting and (future) forecasting.
 - **`tsbricks.backtesting`** — Use-case orchestrator: config parsing, fold generation, parallelized evaluation, structured output.
 
+## Installation
+
+Install the latest release from GitHub:
+
+```bash
+uv add git+https://github.com/betsyhcamp/tsbricks.git@v0.1.0
+```
+
+With optional extras:
+
+```bash
+# Matplotlib plotting backend
+uv add "tsbricks[matplotlib] @ git+https://github.com/betsyhcamp/tsbricks.git@v0.1.0"
+
+# Polars interop
+uv add "tsbricks[polars] @ git+https://github.com/betsyhcamp/tsbricks.git@v0.1.0"
+
+# Multiple extras
+uv add "tsbricks[matplotlib,polars] @ git+https://github.com/betsyhcamp/tsbricks.git@v0.1.0"
+```
+
 ## Quick start
 
 ```python

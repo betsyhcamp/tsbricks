@@ -7,35 +7,24 @@ and this project adheres to **Semantic Versioning** (https://semver.org/).
 
 ## [Unreleased]
 
-### Added
-
--
-
-### Changed
-
--
-
-### Deprecated
-
--
-
-### Removed
-
--
-
-### Fixed
-
--
-
-### Security
-
--
-
-## [0.1.0] - YYYY-MM-DD
+## [0.1.0] - 2026-03-22
 
 ### Added
 
-- Initial release.
+- **Backtesting engine** — YAML-driven, configuration-based backtesting via `run_backtest()` with structured `BacktestResults` output.
+- **Cross-validation** — Explicit forecast-origin fold generation with support for both datetime and integer `ds` columns; optional held-out test fold.
+- **Pydantic config schemas** — Typed, validated configuration for backtests, metrics, transforms, and fold definitions.
+- **Metrics** — RMSE, RMSSE, WAPE, and difference-scaled bias with per-series, grouped, and global (pooled) aggregation scopes.
+- **Grouped and pooled metric aggregation** — Two-stage aggregated metrics (e.g., global WRMSSE) with config-driven grouping and weighting sources.
+- **Parameter resolvers** — Context-aware parameter resolution for evaluation metrics.
+- **Transforms** — `BoxCoxTransform` and `WorkdayNormalizeTransform` with fit/apply/inverse lifecycle via `BaseTransform`.
+- **Transform pipeline runner** — Chained transform execution, model invocation, and serialization helpers in `tsbricks.runner`.
+- **Diagnostics** — Residual ACF, stationarity checks, and summary statistics.
+- **ACF/PACF plots** — `plot_acf()` and `plot_pacf()` with Plotly and Matplotlib backends via statsmodels.
+- **Seasonal plots** — `plot_seasonal()` with configurable seasonal decomposition, Plotly and Matplotlib backends, and native colormap support.
+- **Data I/O** — BigQuery and GCS read/write helpers with Parquet and DataFrame support.
+- **Metadata collection** — Git hash and `uv.lock` SHA-256 capture attached to backtest results for reproducibility.
+- **Polars interop** — Automatic Polars-to-Pandas conversion at public API boundaries.
 
 <!--
 Guidelines:
@@ -47,7 +36,5 @@ Guidelines:
   3) Optionally add link references below for GitHub compare links
 -->
 
-<!-- Optional: link references for GitHub compare URLs
-[Unreleased]: https://github.com/<org>/<repo>/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/<org>/<repo>/releases/tag/v0.1.0
--->
+[0.1.0]: https://github.com/betsyhcamp/tsbricks/releases/tag/v0.1.0
+[unreleased]: https://github.com/betsyhcamp/tsbricks/compare/v0.1.0...HEAD
