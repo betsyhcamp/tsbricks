@@ -196,6 +196,8 @@ def run_backtest(
 
     _validate_weights_df(weights_df, backtest_config, fold_origins)
 
+    run_summary: dict = {"warnings": [], "errors": []}
+
     forecasts_per_fold: dict[str, pd.DataFrame] = {}
     all_metrics: list[pd.DataFrame] = []
 
@@ -312,5 +314,6 @@ def run_backtest(
         config=raw_config,
         git_hash=git_hash,
         uv_lock_info=uv_lock_info,
+        run_summary=run_summary,
         test=test_results,
     )
