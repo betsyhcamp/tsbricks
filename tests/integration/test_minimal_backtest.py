@@ -94,8 +94,8 @@ def test_minimal_backtest_end_to_end() -> None:
     if results.uv_lock_info is not None:
         assert set(results.uv_lock_info.keys()) == {"path", "sha256"}
 
-    # run_summary deferred
-    assert results.run_summary is None
+    # run_summary always populated with empty lists when no issues
+    assert results.run_summary == {"warnings": [], "errors": []}
 
 
 def _synthetic_monthly_panel_long() -> pd.DataFrame:
