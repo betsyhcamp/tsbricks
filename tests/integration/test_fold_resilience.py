@@ -76,111 +76,213 @@ def _config_with_working_model() -> dict:
     }
 
 
-class TestCVFoldResilience:
-    """Tests for CV fold-level try/except in engine.py."""
+# ---- CV fold resilience ----
 
-    def test_all_folds_fail_raises_runtime_error(self):
-        """When all CV folds fail, raise RuntimeError."""
-        df = _synthetic_monthly_panel()
-        cfg = _config_with_failing_model()
 
-        with pytest.raises(RuntimeError, match="All CV folds failed"):
+def test_all_folds_fail_raises_runtime_error():
+    """When all CV folds fail, raise RuntimeError."""
+    df = _synthetic_monthly_panel()
+    cfg = _config_with_failing_model()
+
+    with pytest.raises(RuntimeError, match="All CV folds failed"):
+        run_backtest(config=cfg, df=df)
+
+
+def test_single_fold_failure_skips_and_continues(monkeypatch):
+    """When one fold fails, the other succeeds."""
+    df = _synthetic_monthly_panel()
+    cfg = _config_with_working_model()
+
+    call_count = {"n": 0}
+
+    def fail_first_fold(train_df, horizon, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise ValueError("First fold fails")
+        from tsbricks._testing.dummy_models import forecast_only
+
+        return forecast_only(train_df, horizon, **kwargs)
+
+    import tsbricks._testing.dummy_models as dm
+
+    monkeypatch.setattr(dm, "fail_first_fold", fail_first_fold, raising=False)
+    cfg["model"]["callable"] = "tsbricks._testing.dummy_models.fail_first_fold"
+
+    with pytest.warns(UserWarning, match="failed and was skipped"):
+        results = run_backtest(config=cfg, df=df)
+
+    # Only one fold succeeded
+    assert isinstance(results, BacktestResults)
+    assert len(results.cv.forecasts_per_fold) == 1
+    assert "fold_1" in results.cv.forecasts_per_fold
+
+    # Error captured in run_summary
+    errors = results.run_summary["errors"]
+    assert len(errors) == 1
+    assert errors[0]["fold"] == "fold_0"
+    assert errors[0]["error_type"] == "ValueError"
+    assert "First fold fails" in errors[0]["message"]
+    assert errors[0]["traceback"] is not None
+    assert errors[0]["unique_id"] is None
+    assert errors[0]["metric"] is None
+
+
+def test_all_folds_fail_emits_warnings():
+    """Each failed fold emits a UserWarning before RuntimeError."""
+    df = _synthetic_monthly_panel()
+    cfg = _config_with_failing_model()
+
+    with pytest.warns(UserWarning) as warning_records:
+        with pytest.raises(RuntimeError):
             run_backtest(config=cfg, df=df)
 
-    def test_single_fold_failure_skips_and_continues(self, monkeypatch):
-        """When one fold fails, the other succeeds."""
-        df = _synthetic_monthly_panel()
-        cfg = _config_with_working_model()
-
-        # Use a model that fails only on the first call
-        call_count = {"n": 0}
-
-        def fail_first_fold(train_df, horizon, **kwargs):
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                raise ValueError("First fold fails")
-            from tsbricks._testing.dummy_models import forecast_only
-
-            return forecast_only(train_df, horizon, **kwargs)
-
-        import tsbricks._testing.dummy_models as dm
-
-        monkeypatch.setattr(dm, "fail_first_fold", fail_first_fold, raising=False)
-        cfg["model"]["callable"] = "tsbricks._testing.dummy_models.fail_first_fold"
-
-        with pytest.warns(UserWarning, match="failed and was skipped"):
-            results = run_backtest(config=cfg, df=df)
-
-        # Only one fold succeeded
-        assert isinstance(results, BacktestResults)
-        assert len(results.cv.forecasts_per_fold) == 1
-        assert "fold_1" in results.cv.forecasts_per_fold
-
-        # Error captured in run_summary
-        errors = results.run_summary["errors"]
-        assert len(errors) == 1
-        assert errors[0]["fold"] == "fold_0"
-        assert errors[0]["error_type"] == "ValueError"
-        assert "First fold fails" in errors[0]["message"]
-        assert errors[0]["traceback"] is not None
-        assert errors[0]["unique_id"] is None
-        assert errors[0]["metric"] is None
-
-    def test_all_folds_fail_emits_warnings(self):
-        """Each failed fold emits a UserWarning before RuntimeError."""
-        df = _synthetic_monthly_panel()
-        cfg = _config_with_failing_model()
-
-        with pytest.warns(UserWarning) as warning_records:
-            with pytest.raises(RuntimeError):
-                run_backtest(config=cfg, df=df)
-
-        # Two folds, two warnings
-        fold_warnings = [
-            w for w in warning_records if "failed and was skipped" in str(w.message)
-        ]
-        assert len(fold_warnings) == 2
+    # Two folds, two warnings
+    fold_warnings = [
+        w for w in warning_records if "failed and was skipped" in str(w.message)
+    ]
+    assert len(fold_warnings) == 2
 
 
-class TestTestFoldResilience:
-    """Tests for test fold try/except in engine.py."""
+# ---- test fold resilience ----
 
-    def test_test_fold_failure_preserves_cv_results(self, monkeypatch):
-        """When test fold fails, CV results are still returned."""
-        df = _synthetic_monthly_panel_long()
-        cfg = _config_with_working_model()
-        cfg["test"] = {"test_origin": "2023-07-01"}
 
-        # Make test fold fail by monkeypatching
-        call_count = {"n": 0}
+def test_test_fold_failure_preserves_cv_results(monkeypatch):
+    """When test fold fails, CV results are still returned."""
+    df = _synthetic_monthly_panel_long()
+    cfg = _config_with_working_model()
+    cfg["test"] = {"test_origin": "2023-07-01"}
 
-        def fail_on_third_call(train_df, horizon, **kwargs):
-            call_count["n"] += 1
-            # First two calls are CV folds, third is test fold
-            if call_count["n"] == 3:
-                raise ValueError("Test fold fails")
-            from tsbricks._testing.dummy_models import forecast_only
+    call_count = {"n": 0}
 
-            return forecast_only(train_df, horizon, **kwargs)
+    def fail_on_third_call(train_df, horizon, **kwargs):
+        call_count["n"] += 1
+        # First two calls are CV folds, third is test fold
+        if call_count["n"] == 3:
+            raise ValueError("Test fold fails")
+        from tsbricks._testing.dummy_models import forecast_only
 
-        import tsbricks._testing.dummy_models as dm
+        return forecast_only(train_df, horizon, **kwargs)
 
-        monkeypatch.setattr(dm, "fail_on_third_call", fail_on_third_call, raising=False)
-        cfg["model"]["callable"] = "tsbricks._testing.dummy_models.fail_on_third_call"
+    import tsbricks._testing.dummy_models as dm
 
-        with pytest.warns(UserWarning, match="Test fold failed and was skipped"):
-            results = run_backtest(config=cfg, df=df)
+    monkeypatch.setattr(dm, "fail_on_third_call", fail_on_third_call, raising=False)
+    cfg["model"]["callable"] = "tsbricks._testing.dummy_models.fail_on_third_call"
 
-        # CV results intact
-        assert isinstance(results, BacktestResults)
-        assert len(results.cv.forecasts_per_fold) == 2
+    with pytest.warns(UserWarning, match="Test fold failed and was skipped"):
+        results = run_backtest(config=cfg, df=df)
 
-        # Test results are None
-        assert results.test is None
+    # CV results intact
+    assert isinstance(results, BacktestResults)
+    assert len(results.cv.forecasts_per_fold) == 2
 
-        # Error captured in run_summary
-        errors = results.run_summary["errors"]
-        test_errors = [e for e in errors if e["fold"] == "test"]
-        assert len(test_errors) == 1
-        assert test_errors[0]["error_type"] == "ValueError"
-        assert "Test fold fails" in test_errors[0]["message"]
+    # Test results are None
+    assert results.test is None
+
+    # Error captured in run_summary
+    errors = results.run_summary["errors"]
+    test_errors = [e for e in errors if e["fold"] == "test"]
+    assert len(test_errors) == 1
+    assert test_errors[0]["error_type"] == "ValueError"
+    assert "Test fold fails" in test_errors[0]["message"]
+
+
+# ---- warning capture ----
+
+
+def _config_with_warning_model() -> dict:
+    """Config where the model emits a UserWarning."""
+    return {
+        "data": {"freq": "MS"},
+        "cross_validation": {
+            "mode": "explicit",
+            "horizon": 6,
+            "forecast_origins": ["2023-01-01", "2023-06-01"],
+        },
+        "model": {
+            "callable": ("tsbricks._testing.dummy_models.forecast_with_warning"),
+        },
+        "metrics": {
+            "definitions": [
+                {
+                    "name": "rmse",
+                    "callable": "tsbricks.blocks.metrics.rmse",
+                    "type": "simple",
+                }
+            ],
+        },
+    }
+
+
+def test_model_warnings_captured_in_run_summary():
+    """Warnings emitted by the model callable appear in run_summary."""
+    df = _synthetic_monthly_panel()
+    cfg = _config_with_warning_model()
+
+    results = run_backtest(config=cfg, df=df)
+
+    model_warnings = [
+        w for w in results.run_summary["warnings"] if w["stage"] == "model"
+    ]
+    assert len(model_warnings) == 2  # one per fold
+    assert all("Model convergence issue" in w["message"] for w in model_warnings)
+    assert all(w["category"] == "UserWarning" for w in model_warnings)
+    assert {w["fold"] for w in model_warnings} == {"fold_0", "fold_1"}
+
+
+def test_warning_entry_has_all_fields():
+    """Each warning entry has the expected schema fields."""
+    df = _synthetic_monthly_panel()
+    cfg = _config_with_warning_model()
+
+    results = run_backtest(config=cfg, df=df)
+
+    expected_keys = {
+        "fold",
+        "stage",
+        "category",
+        "message",
+        "filename",
+        "lineno",
+        "unique_id",
+    }
+    for w in results.run_summary["warnings"]:
+        assert set(w.keys()) == expected_keys
+
+
+def test_fold_error_stage_is_model_when_model_fails(monkeypatch):
+    """Fold-level error records stage='model' when model raises."""
+    df = _synthetic_monthly_panel()
+    cfg = _config_with_working_model()
+
+    call_count = {"n": 0}
+
+    def fail_first_fold(train_df, horizon, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise ValueError("Model blew up")
+        from tsbricks._testing.dummy_models import forecast_only
+
+        return forecast_only(train_df, horizon, **kwargs)
+
+    import tsbricks._testing.dummy_models as dm
+
+    monkeypatch.setattr(dm, "fail_first_fold_stage", fail_first_fold, raising=False)
+    cfg["model"]["callable"] = "tsbricks._testing.dummy_models.fail_first_fold_stage"
+
+    with pytest.warns(UserWarning):
+        results = run_backtest(config=cfg, df=df)
+
+    errors = results.run_summary["errors"]
+    assert len(errors) == 1
+    assert errors[0]["stage"] == "model"
+
+
+def test_no_warnings_yields_empty_list():
+    """When nothing warns, run_summary['warnings'] is empty."""
+    df = _synthetic_monthly_panel()
+    cfg = _config_with_working_model()
+
+    results = run_backtest(config=cfg, df=df)
+
+    assert results.run_summary["warnings"] == []
+    assert results.run_summary["errors"] == []
