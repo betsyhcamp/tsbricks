@@ -14,6 +14,7 @@ from tsbricks.backtesting.results import BacktestResults, CVResults, TestResults
 from tsbricks.backtesting.schema import BacktestConfig, parse_config
 from tsbricks.runner import (
     apply_transforms,
+    capture_warnings,
     fit_transforms,
     inverse_transforms,
     invoke_model,
@@ -205,24 +206,34 @@ def run_backtest(
     all_metrics: list[pd.DataFrame] = []
 
     for fold_idx, (fold_id, splits) in enumerate(cv_folds.items()):
+        stage = "transform"
         try:
             train_df = splits["train"]
             val_df = splits["val"]
 
-            fitted_transforms, transformed_train = fit_transforms(
-                train_df, backtest_config.transforms or []
-            )
-            apply_transforms(val_df, fitted_transforms)
+            with capture_warnings(
+                run_summary["warnings"], fold=fold_id, stage="transform"
+            ):
+                fitted_transforms, transformed_train = fit_transforms(
+                    train_df, backtest_config.transforms or []
+                )
+                apply_transforms(val_df, fitted_transforms)
 
+            stage = "model"
             # Will need & use returned variables _variablename
             # in a future version
-            forecast_df, _fitted_values_df, _model_object = invoke_model(
-                transformed_train,
-                backtest_config.model,
-                backtest_config.cross_validation.horizon,
-            )
+            with capture_warnings(run_summary["warnings"], fold=fold_id, stage="model"):
+                forecast_df, _fitted_values_df, _model_object = invoke_model(
+                    transformed_train,
+                    backtest_config.model,
+                    backtest_config.cross_validation.horizon,
+                )
 
-            forecast_original = inverse_transforms(forecast_df, fitted_transforms)
+            stage = "transform"
+            with capture_warnings(
+                run_summary["warnings"], fold=fold_id, stage="transform"
+            ):
+                forecast_original = inverse_transforms(forecast_df, fitted_transforms)
 
             fold_weights: dict[str, float] | None = None
             if weights_df is not None:
@@ -235,16 +246,20 @@ def run_backtest(
                     )
                 )
 
-            fold_metrics = evaluate_metrics(
-                y_true=val_df,
-                y_pred=forecast_original,
-                y_train=train_df,
-                metrics_config=backtest_config.metrics,
-                fold_id=fold_id,
-                grouping_df=grouping_df,
-                fold_weights=fold_weights,
-                run_summary=run_summary,
-            )
+            stage = "metric"
+            with capture_warnings(
+                run_summary["warnings"], fold=fold_id, stage="metric"
+            ):
+                fold_metrics = evaluate_metrics(
+                    y_true=val_df,
+                    y_pred=forecast_original,
+                    y_train=train_df,
+                    metrics_config=backtest_config.metrics,
+                    fold_id=fold_id,
+                    grouping_df=grouping_df,
+                    fold_weights=fold_weights,
+                    run_summary=run_summary,
+                )
 
             forecasts_per_fold[fold_id] = forecast_original
             all_metrics.append(fold_metrics)
@@ -253,7 +268,7 @@ def run_backtest(
             run_summary["errors"].append(
                 {
                     "fold": fold_id,
-                    "stage": "model",
+                    "stage": stage,
                     "error_type": type(exc).__name__,
                     "message": str(exc),
                     "traceback": tb_module.format_exc(),
@@ -283,22 +298,32 @@ def run_backtest(
     # ---- test fold ----
     test_results: TestResults | None = None
     if test_split is not None:
+        stage = "transform"
         try:
             test_train_df = test_split["train"]
             test_test_df = test_split["test"]
 
-            fitted_transforms, transformed_train = fit_transforms(
-                test_train_df, backtest_config.transforms or []
-            )
-            apply_transforms(test_test_df, fitted_transforms)
+            with capture_warnings(
+                run_summary["warnings"], fold="test", stage="transform"
+            ):
+                fitted_transforms, transformed_train = fit_transforms(
+                    test_train_df, backtest_config.transforms or []
+                )
+                apply_transforms(test_test_df, fitted_transforms)
 
-            forecast_df, _fitted_values_df, _model_object = invoke_model(
-                transformed_train,
-                backtest_config.model,
-                backtest_config.cross_validation.horizon,
-            )
+            stage = "model"
+            with capture_warnings(run_summary["warnings"], fold="test", stage="model"):
+                forecast_df, _fitted_values_df, _model_object = invoke_model(
+                    transformed_train,
+                    backtest_config.model,
+                    backtest_config.cross_validation.horizon,
+                )
 
-            forecast_original = inverse_transforms(forecast_df, fitted_transforms)
+            stage = "transform"
+            with capture_warnings(
+                run_summary["warnings"], fold="test", stage="transform"
+            ):
+                forecast_original = inverse_transforms(forecast_df, fitted_transforms)
 
             if backtest_config.data.freq == 1:
                 test_origin_typed: pd.Timestamp | int = int(
@@ -321,16 +346,18 @@ def run_backtest(
                     )
                 )
 
-            test_metrics = evaluate_metrics(
-                y_true=test_test_df,
-                y_pred=forecast_original,
-                y_train=test_train_df,
-                metrics_config=backtest_config.metrics,
-                fold_id="test",
-                grouping_df=grouping_df,
-                fold_weights=test_fold_weights,
-                run_summary=run_summary,
-            )
+            stage = "metric"
+            with capture_warnings(run_summary["warnings"], fold="test", stage="metric"):
+                test_metrics = evaluate_metrics(
+                    y_true=test_test_df,
+                    y_pred=forecast_original,
+                    y_train=test_train_df,
+                    metrics_config=backtest_config.metrics,
+                    fold_id="test",
+                    grouping_df=grouping_df,
+                    fold_weights=test_fold_weights,
+                    run_summary=run_summary,
+                )
 
             test_results = TestResults(
                 forecasts=forecast_original,
@@ -343,7 +370,7 @@ def run_backtest(
             run_summary["errors"].append(
                 {
                     "fold": "test",
-                    "stage": "model",
+                    "stage": stage,
                     "error_type": type(exc).__name__,
                     "message": str(exc),
                     "traceback": tb_module.format_exc(),

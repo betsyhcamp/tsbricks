@@ -60,6 +60,16 @@ def forecast_with_exogenous(
     return forecast_df, fitted_df, model_object
 
 
+def forecast_with_warning(
+    train_df: pd.DataFrame, horizon: int, **kwargs: object
+) -> pd.DataFrame:
+    """Emit a UserWarning then return a valid forecast."""
+    import warnings
+
+    warnings.warn("Model convergence issue", UserWarning, stacklevel=1)
+    return forecast_only(train_df, horizon, **kwargs)
+
+
 def always_fails(
     train_df: pd.DataFrame, horizon: int, **kwargs: object
 ) -> pd.DataFrame:
