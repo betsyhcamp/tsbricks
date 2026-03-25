@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import traceback as tb_module
+
+import numpy as np
 import pandas as pd
 
 from tsbricks.backtesting.schema import MetricsConfig
@@ -61,6 +64,8 @@ def _compute_per_series_values(
     y_train: pd.DataFrame,
     unique_ids,
     resolved_params: dict[str, dict] | None = None,
+    run_summary: dict | None = None,
+    fold_id: str | None = None,
 ) -> dict[str, float]:
     """Compute per-series metric values and return as {unique_id: value} dict.
 
@@ -77,14 +82,30 @@ def _compute_per_series_values(
             for param_name, lookup in resolved_params.items():
                 per_uid_kwargs[param_name] = lookup.get(uid, None)
 
-        if defn.type == "simple":
-            result = metric_fn(y_true_arr, y_pred_arr, **per_uid_kwargs)
-        else:
-            result = metric_fn(
-                y_true_arr, y_pred_arr, y_train=y_train_arr, **per_uid_kwargs
-            )
+        try:
+            if defn.type == "simple":
+                result = metric_fn(y_true_arr, y_pred_arr, **per_uid_kwargs)
+            else:
+                result = metric_fn(
+                    y_true_arr, y_pred_arr, y_train=y_train_arr, **per_uid_kwargs
+                )
 
-        values[uid] = result[0] if isinstance(result, tuple) else result
+            values[uid] = result[0] if isinstance(result, tuple) else result
+        except Exception as exc:
+            if run_summary is None:
+                raise
+            values[uid] = np.nan
+            run_summary["errors"].append(
+                {
+                    "fold": fold_id,
+                    "stage": "metric",
+                    "error_type": type(exc).__name__,
+                    "message": str(exc),
+                    "traceback": tb_module.format_exc(),
+                    "unique_id": uid,
+                    "metric": defn.name,
+                }
+            )
     return values
 
 
@@ -99,6 +120,7 @@ def _evaluate_global_scope(
     fold_weights: dict[str, float] | None,
     rows: list[dict],
     resolved_params: dict[str, dict] | None = None,
+    run_summary: dict | None = None,
 ) -> None:
     """Compute a global-scope metric via two-stage aggregation.
 
@@ -123,6 +145,8 @@ def _evaluate_global_scope(
         y_train,
         unique_ids,
         resolved_params=resolved_params,
+        run_summary=run_summary,
+        fold_id=fold_id,
     )
 
     agg_fn = dynamic_import(defn.aggregation_callable)
@@ -156,6 +180,7 @@ def _evaluate_group_two_stage(
     fold_weights: dict[str, float] | None,
     rows: list[dict],
     resolved_params: dict[str, dict] | None = None,
+    run_summary: dict | None = None,
 ) -> None:
     """Compute a group-scope metric via two-stage aggregation.
 
@@ -182,6 +207,8 @@ def _evaluate_group_two_stage(
             y_train,
             uid_set,
             resolved_params=resolved_params,
+            run_summary=run_summary,
+            fold_id=fold_id,
         )
 
         group_weights = {
@@ -260,6 +287,7 @@ def evaluate_metrics(
     fold_id: str,
     grouping_df: pd.DataFrame | None = None,
     fold_weights: dict[str, float] | None = None,
+    run_summary: dict | None = None,
 ) -> pd.DataFrame:
     """Compute all configured metrics for one fold, per series.
 
@@ -318,14 +346,33 @@ def evaluate_metrics(
                     for param_name, lookup in resolved_params.items():
                         per_uid_kwargs[param_name] = lookup.get(uid, None)
 
-                if defn.type == "simple":
-                    result = metric_fn(y_true_arr, y_pred_arr, **per_uid_kwargs)
-                else:
-                    result = metric_fn(
-                        y_true_arr, y_pred_arr, y_train=y_train_arr, **per_uid_kwargs
-                    )
+                try:
+                    if defn.type == "simple":
+                        result = metric_fn(y_true_arr, y_pred_arr, **per_uid_kwargs)
+                    else:
+                        result = metric_fn(
+                            y_true_arr,
+                            y_pred_arr,
+                            y_train=y_train_arr,
+                            **per_uid_kwargs,
+                        )
 
-                value = result[0] if isinstance(result, tuple) else result
+                    value = result[0] if isinstance(result, tuple) else result
+                except Exception as exc:
+                    if run_summary is None:
+                        raise
+                    value = np.nan
+                    run_summary["errors"].append(
+                        {
+                            "fold": fold_id,
+                            "stage": "metric",
+                            "error_type": type(exc).__name__,
+                            "message": str(exc),
+                            "traceback": tb_module.format_exc(),
+                            "unique_id": uid,
+                            "metric": defn.name,
+                        }
+                    )
 
                 rows.append(
                     {
@@ -354,6 +401,7 @@ def evaluate_metrics(
                     fold_weights,
                     rows,
                     resolved_params=resolved_params,
+                    run_summary=run_summary,
                 )
             else:
                 _evaluate_group_scope(
@@ -381,6 +429,7 @@ def evaluate_metrics(
                 fold_weights,
                 rows,
                 resolved_params=resolved_params,
+                run_summary=run_summary,
             )
 
     return pd.DataFrame(

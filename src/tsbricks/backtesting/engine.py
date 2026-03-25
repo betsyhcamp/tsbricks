@@ -243,6 +243,7 @@ def run_backtest(
                 fold_id=fold_id,
                 grouping_df=grouping_df,
                 fold_weights=fold_weights,
+                run_summary=run_summary,
             )
 
             forecasts_per_fold[fold_id] = forecast_original
@@ -328,6 +329,7 @@ def run_backtest(
                 fold_id="test",
                 grouping_df=grouping_df,
                 fold_weights=test_fold_weights,
+                run_summary=run_summary,
             )
 
             test_results = TestResults(
