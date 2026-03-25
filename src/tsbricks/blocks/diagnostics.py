@@ -614,9 +614,13 @@ def _plot_acf_pacf_matplotlib(
     ax.set_xlabel("lag")
     ax.set_ylabel(ylabel)
 
-    # Black spines
-    for spine in ax.spines.values():
-        spine.set_color("black")
+    # Gridlines and spines
+    ax.grid(True, color=(0.86, 0.86, 0.86, 0.25), linewidth=0.5)
+    ax.set_axisbelow(True)
+    ax.spines["left"].set_color("black")
+    ax.spines["bottom"].set_color("black")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
 
     fig.tight_layout()
     return fig
@@ -673,6 +677,7 @@ def _plot_acf_pacf_plotly(
     # Zero reference line
     fig.add_hline(y=0, line=dict(color="black", width=0.8))
 
+    _grid_color = "rgba(220,220,220,0.25)"
     fig.update_layout(
         width=width,
         height=height,
@@ -681,6 +686,21 @@ def _plot_acf_pacf_plotly(
         title=None,
         showlegend=False,
         margin=dict(l=60, r=40, t=30, b=60),
+        plot_bgcolor="white",
+        xaxis=dict(
+            showgrid=True,
+            gridcolor=_grid_color,
+            showline=True,
+            linecolor="black",
+            mirror=False,
+        ),
+        yaxis=dict(
+            showgrid=True,
+            gridcolor=_grid_color,
+            showline=True,
+            linecolor="black",
+            mirror=False,
+        ),
     )
 
     return fig
@@ -723,7 +743,12 @@ def _plot_matplotlib(
     )
     ax1.legend(loc="upper left", bbox_to_anchor=(1.01, 1))
     ax1.set_ylabel("Value")
-    ax1.grid(alpha=0.3)
+    ax1.grid(True, color=(0.86, 0.86, 0.86, 0.25), linewidth=0.5)
+    ax1.set_axisbelow(True)
+    ax1.spines["left"].set_color("black")
+    ax1.spines["bottom"].set_color("black")
+    ax1.spines["top"].set_visible(False)
+    ax1.spines["right"].set_visible(False)
 
     # Panel 2: Residuals over time
     ax2 = fig.add_subplot(gs[1, :], sharex=ax1)
@@ -736,7 +761,12 @@ def _plot_matplotlib(
     ax2.axhline(y=0, color="black", linestyle="-", linewidth=0.8)
     ax2.set_ylabel("Residual")
     ax2.set_xlabel("Time")
-    ax2.grid(alpha=0.3)
+    ax2.grid(True, color=(0.86, 0.86, 0.86, 0.25), linewidth=0.5)
+    ax2.set_axisbelow(True)
+    ax2.spines["left"].set_color("black")
+    ax2.spines["bottom"].set_color("black")
+    ax2.spines["top"].set_visible(False)
+    ax2.spines["right"].set_visible(False)
 
     # Hide x-axis labels on top panel (shared x-axis)
     plt.setp(ax1.get_xticklabels(), visible=False)
@@ -753,7 +783,12 @@ def _plot_matplotlib(
     ax3.axhline(y=-data.conf_interval, color="red", linestyle="--", linewidth=0.8)
     ax3.set_xlabel("Lag")
     ax3.set_ylabel("ACF")
-    ax3.grid(alpha=0.3)
+    ax3.grid(True, color=(0.86, 0.86, 0.86, 0.25), linewidth=0.5)
+    ax3.set_axisbelow(True)
+    ax3.spines["left"].set_color("black")
+    ax3.spines["bottom"].set_color("black")
+    ax3.spines["top"].set_visible(False)
+    ax3.spines["right"].set_visible(False)
 
     # Panel 4: Histogram with KDE
     ax4 = fig.add_subplot(gs[2, 1])
@@ -770,7 +805,12 @@ def _plot_matplotlib(
     ax4.axvline(x=data.residuals.mean(), color="red", linestyle="--", linewidth=0.8)
     ax4.set_xlabel("Residual")
     ax4.set_ylabel("Density")
-    ax4.grid(alpha=0.3)
+    ax4.grid(True, color=(0.86, 0.86, 0.86, 0.25), linewidth=0.5)
+    ax4.set_axisbelow(True)
+    ax4.spines["left"].set_color("black")
+    ax4.spines["bottom"].set_color("black")
+    ax4.spines["top"].set_visible(False)
+    ax4.spines["right"].set_visible(False)
 
     plt.tight_layout()
     return fig
@@ -912,13 +952,26 @@ def _plot_plotly(
     )
 
     # Update layout
+    _grid_color = "rgba(220,220,220,0.25)"
+    _axis_grid = dict(
+        showgrid=True,
+        gridcolor=_grid_color,
+        showline=True,
+        linecolor="black",
+        mirror=False,
+    )
     fig.update_layout(
         width=width,
         height=height,
         showlegend=True,
         legend=dict(x=1.01, y=1, xanchor="left", yanchor="top"),
         margin=dict(l=60, r=100, t=40, b=60),
+        plot_bgcolor="white",
     )
+
+    # Apply grid/spine settings to all axes
+    fig.update_xaxes(**_axis_grid)
+    fig.update_yaxes(**_axis_grid)
 
     # Axis labels
     fig.update_yaxes(title_text="Value", row=1, col=1)
