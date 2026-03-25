@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import warnings
 
+import pytest
+
 from tsbricks.runner.warnings_utils import capture_warnings, format_warnings
 
 
@@ -140,3 +142,17 @@ class TestCaptureWarnings:
         assert len(target) == 1
         assert target[0]["message"] == "from inner"
         assert target[0]["category"] == "RuntimeWarning"
+
+    def test_warnings_preserved_when_wrapped_code_raises(self):
+        """Warnings emitted before an exception are still captured."""
+        target: list[dict] = []
+
+        with pytest.raises(ValueError, match="boom"):
+            with capture_warnings(target, fold="fold_0", stage="model"):
+                warnings.warn("before failure", UserWarning)
+                raise ValueError("boom")
+
+        assert len(target) == 1
+        assert target[0]["message"] == "before failure"
+        assert target[0]["fold"] == "fold_0"
+        assert target[0]["stage"] == "model"

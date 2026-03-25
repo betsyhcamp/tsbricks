@@ -83,5 +83,7 @@ def capture_warnings(
     """
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        yield
-    target.extend(format_warnings(caught, fold, stage, unique_id))
+        try:
+            yield
+        finally:
+            target.extend(format_warnings(caught, fold, stage, unique_id))
