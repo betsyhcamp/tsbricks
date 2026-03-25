@@ -60,6 +60,13 @@ def forecast_with_exogenous(
     return forecast_df, fitted_df, model_object
 
 
+def always_fails(
+    train_df: pd.DataFrame, horizon: int, **kwargs: object
+) -> pd.DataFrame:
+    """Always raises ValueError — for testing fold-level resilience."""
+    raise ValueError("Intentional model failure for testing")
+
+
 def returns_int(train_df: pd.DataFrame, horizon: int, **kwargs: object) -> int:
     """Return an int — invalid return type for testing."""
     return 42
