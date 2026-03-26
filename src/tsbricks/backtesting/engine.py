@@ -282,9 +282,11 @@ def run_backtest(
             )
 
     if not forecasts_per_fold:
-        raise RuntimeError(
+        exc = RuntimeError(
             "All CV folds failed. Check run_summary['errors'] for details."
         )
+        exc.run_summary = run_summary
+        raise exc
 
     metrics = pd.concat(all_metrics, ignore_index=True)
 
