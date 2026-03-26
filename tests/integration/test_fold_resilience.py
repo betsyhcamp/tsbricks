@@ -80,12 +80,17 @@ def _config_with_working_model() -> dict:
 
 
 def test_all_folds_fail_raises_runtime_error():
-    """When all CV folds fail, raise RuntimeError."""
+    """When all CV folds fail, raise RuntimeError with run_summary attached."""
     df = _synthetic_monthly_panel()
     cfg = _config_with_failing_model()
 
-    with pytest.raises(RuntimeError, match="All CV folds failed"):
+    with pytest.raises(RuntimeError, match="All CV folds failed") as exc_info:
         run_backtest(config=cfg, df=df)
+
+    assert hasattr(exc_info.value, "run_summary")
+    errors = exc_info.value.run_summary["errors"]
+    assert len(errors) == 2
+    assert all(e["error_type"] == "ValueError" for e in errors)
 
 
 def test_single_fold_failure_skips_and_continues(monkeypatch):
