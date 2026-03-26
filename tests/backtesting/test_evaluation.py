@@ -1129,3 +1129,119 @@ def test_static_and_resolver_params_combined(mocker):
         assert call.kwargs["scale"] == 5.0
     thresholds = {c.kwargs["threshold"] for c in mock_rmse.call_args_list}
     assert thresholds == {10, 20, 30}
+
+
+# ---- series-level metric resilience ----
+
+FAILING_METRIC_DEF = {
+    "name": "bad_metric",
+    "callable": ("tsbricks._testing.dummy_metrics.rmse_fails_on_zero_error"),
+    "type": "simple",
+}
+
+
+def test_no_run_summary_raises_on_failure(two_series_data):
+    """Without run_summary, series-level error propagates."""
+    y_true, y_pred, y_train = two_series_data
+    config = _metrics_config([FAILING_METRIC_DEF])
+
+    with pytest.raises(ValueError, match="Zero error not allowed"):
+        evaluate_metrics(y_true, y_pred, y_train, config, "fold_0")
+
+
+def test_with_run_summary_stores_nan(two_series_data):
+    """With run_summary, failed series gets NaN value."""
+    y_true, y_pred, y_train = two_series_data
+    config = _metrics_config([FAILING_METRIC_DEF])
+    run_summary: dict = {"warnings": [], "errors": []}
+
+    result = evaluate_metrics(
+        y_true,
+        y_pred,
+        y_train,
+        config,
+        "fold_0",
+        run_summary=run_summary,
+    )
+
+    # Series B has zero error -> fails -> NaN
+    b_val = result.loc[result["unique_id"] == "B", "value"].iloc[0]
+    assert np.isnan(b_val)
+
+    # Series A succeeds -> finite value
+    a_val = result.loc[result["unique_id"] == "A", "value"].iloc[0]
+    assert np.isfinite(a_val)
+    assert a_val == pytest.approx(1.0)
+
+
+def test_error_captured_in_run_summary(two_series_data):
+    """Failed series error is recorded in run_summary."""
+    y_true, y_pred, y_train = two_series_data
+    config = _metrics_config([FAILING_METRIC_DEF])
+    run_summary: dict = {"warnings": [], "errors": []}
+
+    evaluate_metrics(
+        y_true,
+        y_pred,
+        y_train,
+        config,
+        "fold_0",
+        run_summary=run_summary,
+    )
+
+    errors = run_summary["errors"]
+    assert len(errors) == 1
+    assert errors[0]["fold"] == "fold_0"
+    assert errors[0]["stage"] == "metric"
+    assert errors[0]["error_type"] == "ValueError"
+    assert "Zero error" in errors[0]["message"]
+    assert errors[0]["unique_id"] == "B"
+    assert errors[0]["metric"] == "bad_metric"
+    assert errors[0]["traceback"] is not None
+
+
+def test_all_rows_still_present(two_series_data):
+    """Both series produce rows even when one fails."""
+    y_true, y_pred, y_train = two_series_data
+    config = _metrics_config([FAILING_METRIC_DEF])
+    run_summary: dict = {"warnings": [], "errors": []}
+
+    result = evaluate_metrics(
+        y_true,
+        y_pred,
+        y_train,
+        config,
+        "fold_0",
+        run_summary=run_summary,
+    )
+
+    assert len(result) == 2
+    assert set(result["unique_id"]) == {"A", "B"}
+
+
+def test_multiple_metrics_independent_failures(
+    two_series_data,
+):
+    """Failure in one metric doesn't affect another."""
+    y_true, y_pred, y_train = two_series_data
+    config = _metrics_config([FAILING_METRIC_DEF, RMSE_DEF])
+    run_summary: dict = {"warnings": [], "errors": []}
+
+    result = evaluate_metrics(
+        y_true,
+        y_pred,
+        y_train,
+        config,
+        "fold_0",
+        run_summary=run_summary,
+    )
+
+    # 2 metrics x 2 series = 4 rows
+    assert len(result) == 4
+
+    # Only bad_metric for series B failed
+    assert len(run_summary["errors"]) == 1
+
+    # RMSE rows are all finite
+    rmse_rows = result[result["metric_name"] == "rmse"]
+    assert rmse_rows["value"].apply(np.isfinite).all()

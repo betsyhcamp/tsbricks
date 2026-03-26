@@ -34,6 +34,9 @@ def fit_transforms(
         ``(fitted_transforms, transformed_train_df)`` — the list of
         fitted transform instances and the fully-transformed training
         DataFrame.
+
+    .. note:: This function does not capture warnings internally.
+       See ``PACKAGE_MAINTAINER_SPEC.md`` §9 for warning capture patterns.
     """
     fitted: list[BaseTransform] = []
     df = train_df
@@ -64,6 +67,9 @@ def apply_transforms(
 
     Returns:
         Transformed DataFrame.
+
+    .. note:: This function does not capture warnings internally.
+       See ``PACKAGE_MAINTAINER_SPEC.md`` §9 for warning capture patterns.
     """
     for tx in fitted_transforms:
         df = tx.transform(df, target_col="y")
@@ -90,6 +96,9 @@ def inverse_transforms(
 
     Returns:
         DataFrame with ``ypred`` on the original (untransformed) scale.
+
+    .. note:: This function does not capture warnings internally.
+       See ``PACKAGE_MAINTAINER_SPEC.md`` §9 for warning capture patterns.
     """
     df = forecast_df
     for tx in reversed(fitted_transforms):

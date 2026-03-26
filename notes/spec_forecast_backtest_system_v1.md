@@ -1100,7 +1100,7 @@ class BacktestResults:
     config: dict
     git_hash: str | None = None       # Full 40-char SHA; None if git unavailable
     uv_lock_info: dict | None = None  # {"path": ..., "sha256": ...}; None if uv.lock not found
-    run_summary: dict | None = None   # Deferred until error-handling infrastructure exists
+    run_summary: dict                 # Always {"warnings": [...], "errors": [...]}
 
     # --- Test results (None if test fold disabled) ---
     test: TestResults | None = None
@@ -1131,30 +1131,36 @@ See `spec_pooled_grouped_error_metrics.md` §8 for full details on the output sc
 
 ### 11.3 Run Summary
 
-The `run_summary` dict provides a structured overview of run health:
+The `run_summary` dict provides structured diagnostics for post-run triage. It is always a dict with two keys, both always present (empty lists when no issues):
 
 ```python
 {
-    "total_series_attempted": 500,
-    "successful_series": 487,
-    "failed_series": 13,
-    "warned_series": 52,
-    "failure_rate": 0.026,
-    "warning_rate": 0.104,
-    "total_folds": 5,
-    "failed_folds": 2,
-    "failures": [
-        {"unique_id": "SKU_042", "fold": "fold_3", "error": "ValueError: ..."},
-        ...
-    ],
     "warnings": [
-        {"unique_id": "SKU_007", "fold": "fold_1", "warning": "ConvergenceWarning: ..."},
-        ...
+        {
+            "fold": "fold_0",
+            "stage": "model",
+            "category": "ConvergenceWarning",
+            "message": "Optimization failed to converge.",
+            "filename": "/path/to/statsmodels/tsa/arima/model.py",
+            "lineno": 423,
+            "unique_id": None,
+        },
+    ],
+    "errors": [
+        {
+            "fold": "fold_1",
+            "stage": "model",
+            "error_type": "ValueError",
+            "message": "SVD did not converge",
+            "traceback": "Traceback (most recent call last):\n  ...",
+            "unique_id": None,
+            "metric": None,
+        },
     ],
 }
 ```
 
-`warned_series` counts unique series with at least one warning, not total warning instances. The detailed `warnings` list captures every instance. Warnings are captured from model fitting using Python's `warnings.catch_warnings()` context manager.
+Warnings are captured per stage (transform, model, metric) per fold using `capture_warnings` from `tsbricks.runner`. See `PACKAGE_MAINTAINER_SPEC.md` §9 for the full warning and error handling architecture, and `spec_backtest_warnings_run_summary.md` for the detailed feature specification.
 
 ______________________________________________________________________
 
@@ -1203,7 +1209,7 @@ The following artifacts are available for logging per run:
 | Forecast horizon                 | `horizon`                        | Fixed horizon for the run                                                                           |
 | uv.lock info                     | `uv_lock_info`                   | Dict with `path` and `sha256` of uv.lock file. `None` if not found. See `spec_initial_metadata.md`. |
 | Git hash                         | `git_hash`                       | Full 40-char SHA of HEAD. `None` if git unavailable. See `spec_initial_metadata.md`.                |
-| Run summary                      | `run_summary`                    | Deferred — `None` until error-handling infrastructure exists                                        |
+| Run summary                      | `run_summary`                    | Dict with `warnings` and `errors` lists. See `PACKAGE_MAINTAINER_SPEC.md` §9.2.                     |
 
 ______________________________________________________________________
 
