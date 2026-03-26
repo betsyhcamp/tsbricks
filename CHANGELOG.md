@@ -7,6 +7,21 @@ and this project adheres to **Semantic Versioning** (https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-25
+
+### Added
+
+- **Resilient fold execution** — CV folds that raise exceptions are skipped with errors captured in `run_summary`, instead of aborting the entire backtest.
+- **Per-series metric resilience** — Metric evaluation failures for individual series are captured and skipped rather than halting the run.
+- **Warning capture** — Warnings emitted during transform, model, and metric stages are intercepted and recorded in `run_summary` with fold/series/stage metadata.
+- **`run_summary` on `BacktestResults`** — Always-populated `{"warnings": [...], "errors": [...]}` dict available on every result.
+- **`run_summary` attached to exception** — When all CV folds fail, `run_summary` is accessible via the raised `RuntimeError`.
+- **Warning utilities** — `format_warnings` and `capture_warnings` helpers in `tsbricks.runner`.
+
+### Changed
+
+- **Documentation** — Added §9 (Warning & Error Handling) to `PACKAGE_MAINTAINER_SPEC.md`; updated backtest spec with actual `run_summary` schema.
+
 ## [0.1.0] - 2026-03-22
 
 ### Added
@@ -37,4 +52,5 @@ Guidelines:
 -->
 
 [0.1.0]: https://github.com/betsyhcamp/tsbricks/releases/tag/v0.1.0
-[unreleased]: https://github.com/betsyhcamp/tsbricks/compare/v0.1.0...HEAD
+[0.2.0]: https://github.com/betsyhcamp/tsbricks/releases/tag/v0.2.0
+[unreleased]: https://github.com/betsyhcamp/tsbricks/compare/v0.2.0...HEAD
