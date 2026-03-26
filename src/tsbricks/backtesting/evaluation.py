@@ -307,6 +307,9 @@ def evaluate_metrics(
         Long-format DataFrame with columns
         ``[metric_name, unique_id, fold, scope, grouping_column_name,
         aggregation, value]``.
+
+    .. note:: This function does not capture warnings internally.
+       See ``PACKAGE_MAINTAINER_SPEC.md`` §9 for warning capture patterns.
     """
     resolved = [
         (defn, dynamic_import(defn.callable), defn.params or {})
