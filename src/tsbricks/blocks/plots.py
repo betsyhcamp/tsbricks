@@ -555,6 +555,7 @@ def _plot_seasonal_plotly(
             )
         )
 
+    _grid_color = "rgba(220,220,220,0.25)"
     fig.update_layout(
         width=width,
         height=height,
@@ -564,6 +565,21 @@ def _plot_seasonal_plotly(
         showlegend=True,
         legend=dict(x=1.01, y=1, xanchor="left", yanchor="top"),
         margin=dict(l=60, r=120, t=30, b=60),
+        plot_bgcolor="white",
+        xaxis=dict(
+            showgrid=True,
+            gridcolor=_grid_color,
+            showline=True,
+            linecolor="black",
+            mirror=False,
+        ),
+        yaxis=dict(
+            showgrid=True,
+            gridcolor=_grid_color,
+            showline=True,
+            linecolor="black",
+            mirror=False,
+        ),
     )
 
     return fig
@@ -611,15 +627,21 @@ def _plot_seasonal_matplotlib(
     ax.set_xlabel(f"time ({time_col})")
     ax.set_ylabel(value_col)
 
+    ax.grid(True, color=(0.86, 0.86, 0.86, 0.25), linewidth=0.5)
+    ax.set_axisbelow(True)
+
     # Right-side legend outside plot
     ax.legend(
         loc="upper left",
         bbox_to_anchor=(1.01, 1),
         borderaxespad=0,
+        frameon=False,
     )
 
-    for spine in ax.spines.values():
-        spine.set_color("black")
+    ax.spines["left"].set_color("black")
+    ax.spines["bottom"].set_color("black")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
 
     fig.tight_layout()
     return fig

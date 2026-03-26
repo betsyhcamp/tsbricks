@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
 
@@ -109,8 +109,10 @@ class BacktestResults:
             ``None`` if git is unavailable.
         uv_lock_info: Dict with ``path`` and ``sha256`` of the
             uv.lock file. ``None`` if uv.lock is not found.
-        run_summary: Aggregated warnings and error counts. ``None``
-            until error-handling infrastructure is implemented.
+        run_summary: Structured dict with ``"warnings"`` and
+            ``"errors"`` lists capturing all issues during the run.
+            Always populated (empty lists when no issues).
+            See ``spec_backtest_warnings_run_summary.md`` §3.
         test: Test fold results. ``None`` when the test fold is
             disabled.
         extra: Escape-hatch dict for user-defined data.
@@ -124,9 +126,7 @@ class BacktestResults:
     # Metadata
     git_hash: str | None = None
     uv_lock_info: dict | None = None
-    run_summary: dict | None = (
-        None  # Deferred until error-handling infrastructure exists
-    )
+    run_summary: dict = field(default_factory=lambda: {"warnings": [], "errors": []})
 
     # Test results (None when test fold disabled)
     test: TestResults | None = None

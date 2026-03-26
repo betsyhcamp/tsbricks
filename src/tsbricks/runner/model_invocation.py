@@ -53,6 +53,9 @@ def invoke_model(
 
     Returns:
         ``(forecast_df, fitted_values_df | None, model_object | None)``
+
+    .. note:: This function does not capture warnings internally.
+       See ``PACKAGE_MAINTAINER_SPEC.md`` §9 for warning capture patterns.
     """
     model_fn, hyperparameters = resolve_model(model_config)
 
