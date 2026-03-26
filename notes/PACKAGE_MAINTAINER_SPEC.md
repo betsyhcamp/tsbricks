@@ -331,3 +331,102 @@ The following patterns are required in V1 to enable future acceleration:
 **`get_fitted_params` naming and contract.** The `get_fitted_params` method on `BaseTransform` implies parameters learned from data. Not all transforms fit parameters — `WorkdayNormalizeTransform` stores external calendar data, and a log transform has no state at all. Currently these transforms return an empty dict. As more non-fitting transforms are added, consider whether to rename or broaden this method (e.g., `get_params`) to accommodate transforms that have configuration state but no fitted state. Revisit once there are enough concrete transforms to see if a clear pattern emerges. See `spec_workday_normalize_transform.md` §6.1 for the full discussion.
 
 **Standalone config validation for composable step functions.** When the user calls `run_backtest`, the pipeline parses the config through Pydantic and all validation runs. When a power user calls composable step functions like `fit_transforms` directly, they bypass this validation. Consider exposing a standalone `validate_config` function (or similar) that power users can call independently of `run_backtest` to get the same validation guarantees when using the composable step functions. See `spec_workday_normalize_transform.md` §6.2 for the full discussion.
+
+______________________________________________________________________
+
+## 9. Warning & Error Handling
+
+### 9.1 Library Logging Convention
+
+The package uses `logging.getLogger(__name__)` without attaching handlers — the caller controls log routing. User-facing notifications of fold-level failures use `warnings.warn()`. All structured diagnostics are collected into `run_summary`, the primary post-run inspection surface.
+
+### 9.2 `run_summary` Structure
+
+`run_summary` is a dict with two keys, both always present (empty lists when no issues):
+
+```python
+{
+    "warnings": [
+        {
+            "fold": "fold_0",
+            "stage": "model",
+            "category": "ConvergenceWarning",
+            "message": "Optimization failed to converge.",
+            "filename": "/path/to/statsmodels/tsa/arima/model.py",
+            "lineno": 423,
+            "unique_id": None,
+        },
+    ],
+    "errors": [
+        {
+            "fold": "fold_1",
+            "stage": "model",
+            "error_type": "ValueError",
+            "message": "SVD did not converge",
+            "traceback": "Traceback (most recent call last):\n  ...",
+            "unique_id": None,
+            "metric": None,
+        },
+    ],
+}
+```
+
+Stage vocabulary: `"transform"`, `"model"`, `"metric"`. See `spec_backtest_warnings_run_summary.md` §3 for the full schema.
+
+### 9.3 Warning Capture in `run_backtest`
+
+The engine wraps each pipeline stage per fold with `capture_warnings` from `tsbricks.runner`:
+
+```python
+with capture_warnings(run_summary["warnings"], fold=fold_id, stage="model"):
+    forecast_df, fitted_df, model_obj = invoke_model(...)
+```
+
+Composable step functions (`invoke_model`, `fit_transforms`, `apply_transforms`, `inverse_transforms`, `evaluate_metrics`) do **not** suppress or capture warnings internally — they let warnings propagate via Python's standard `warnings` module. The engine is the only consumer that captures them.
+
+### 9.4 Warning Capture for Power Users
+
+Power users calling composable functions outside `run_backtest` can capture warnings using the provided utilities:
+
+```python
+from tsbricks.runner import capture_warnings
+
+my_warnings: list[dict] = []
+with capture_warnings(my_warnings, fold="fold_0", stage="model"):
+    forecast_df, fitted_df, model_obj = invoke_model(train_df, model_config, horizon)
+# my_warnings now contains formatted warning dicts
+```
+
+Or using stdlib directly:
+
+```python
+import warnings
+
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    forecast_df, fitted_df, model_obj = invoke_model(train_df, model_config, horizon)
+```
+
+### 9.5 Warning Utilities
+
+Two utilities in `tsbricks.runner.warnings_utils`, exported from `tsbricks.runner`:
+
+- **`format_warnings(caught, fold, stage, unique_id=None)`** — Pure function converting stdlib `WarningMessage` objects to the dict schema in §9.2.
+- **`capture_warnings(target, fold, stage, unique_id=None)`** — Context manager wrapping `warnings.catch_warnings(record=True)` with `simplefilter("always")`, appending formatted dicts to `target` on exit.
+
+### 9.6 `n_jobs` Caveat
+
+When a model callable uses `n_jobs > 1` internally, warnings emitted in worker processes are silently swallowed by Python's `multiprocessing`. To capture all model warnings, use `n_jobs=1`. This is a Python limitation, not a tsbricks limitation.
+
+### 9.7 All-Folds-Failed Behavior
+
+When every CV fold fails, `run_backtest` raises a `RuntimeError` with the collected `run_summary` attached as an attribute on the exception:
+
+```python
+try:
+    results = run_backtest(config=cfg, df=df)
+except RuntimeError as e:
+    errors = e.run_summary["errors"]  # structured diagnostics
+```
+
+The `run_summary` dict is not printed by default — callers must explicitly access `e.run_summary` to inspect it.
