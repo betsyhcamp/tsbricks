@@ -1473,3 +1473,220 @@ def test_plot_pacf_polars_input():
     )
     fig = plot_pacf(df, "time", "value", return_fig=True)
     assert fig is not None
+
+
+# =====================================================================
+# plot_acf / plot_pacf — ax parameter tests
+# =====================================================================
+
+
+def test_plot_acf_ax_draws_on_provided_axes(acf_df_datetime):
+    """When ax is provided, draws on it and returns its parent figure."""
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    returned = plot_acf(
+        acf_df_datetime,
+        "time",
+        "value",
+        backend="matplotlib",
+        ax=ax,
+    )
+    assert returned is fig
+    plt.close(fig)
+
+
+def test_plot_acf_ax_no_tight_layout_call(acf_df_datetime, monkeypatch):
+    """When ax is provided, tight_layout is not called."""
+    import matplotlib.pyplot as plt
+    import matplotlib.figure
+
+    tight_layout_called = []
+    original = matplotlib.figure.Figure.tight_layout
+
+    def spy(self, *a, **kw):
+        tight_layout_called.append(True)
+        return original(self, *a, **kw)
+
+    monkeypatch.setattr(matplotlib.figure.Figure, "tight_layout", spy)
+
+    fig, ax = plt.subplots()
+    plot_acf(
+        acf_df_datetime,
+        "time",
+        "value",
+        backend="matplotlib",
+        ax=ax,
+    )
+    assert len(tight_layout_called) == 0
+    plt.close(fig)
+
+
+def test_plot_acf_ax_does_not_create_new_figure(
+    acf_df_datetime,
+    monkeypatch,
+):
+    """When ax is provided, plt.subplots is not called internally."""
+    import matplotlib.pyplot as plt
+
+    subplots_called = []
+    original = plt.subplots
+
+    def spy(*a, **kw):
+        subplots_called.append(True)
+        return original(*a, **kw)
+
+    monkeypatch.setattr(plt, "subplots", spy)
+
+    fig, ax = plt.subplots()
+    subplots_called.clear()
+    plot_acf(
+        acf_df_datetime,
+        "time",
+        "value",
+        backend="matplotlib",
+        ax=ax,
+    )
+    assert len(subplots_called) == 0
+    plt.close(fig)
+
+
+def test_plot_acf_ax_with_plotly_raises(acf_df_datetime):
+    """ax with backend='plotly' raises ValueError."""
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    with pytest.raises(ValueError, match="backend='plotly'"):
+        plot_acf(
+            acf_df_datetime,
+            "time",
+            "value",
+            backend="plotly",
+            ax=ax,
+        )
+    plt.close(fig)
+
+
+def test_plot_acf_ax_invalid_type_raises(acf_df_datetime):
+    """ax that is not an Axes instance raises TypeError."""
+    with pytest.raises(TypeError, match="matplotlib.axes.Axes"):
+        plot_acf(
+            acf_df_datetime,
+            "time",
+            "value",
+            backend="matplotlib",
+            ax="not_an_axes",
+        )
+
+
+def test_plot_acf_ax_none_existing_behavior(acf_df_datetime):
+    """ax=None preserves existing behavior."""
+    import matplotlib.pyplot as plt
+
+    fig = plot_acf(
+        acf_df_datetime,
+        "time",
+        "value",
+        backend="matplotlib",
+        return_fig=True,
+        ax=None,
+    )
+    assert fig is not None
+    plt.close(fig)
+
+
+def test_plot_pacf_ax_draws_on_provided_axes(acf_df_datetime):
+    """When ax is provided, draws on it and returns its parent figure."""
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    returned = plot_pacf(
+        acf_df_datetime,
+        "time",
+        "value",
+        backend="matplotlib",
+        ax=ax,
+    )
+    assert returned is fig
+    plt.close(fig)
+
+
+def test_plot_pacf_ax_no_tight_layout_call(acf_df_datetime, monkeypatch):
+    """When ax is provided, tight_layout is not called."""
+    import matplotlib.pyplot as plt
+    import matplotlib.figure
+
+    tight_layout_called = []
+    original = matplotlib.figure.Figure.tight_layout
+
+    def spy(self, *a, **kw):
+        tight_layout_called.append(True)
+        return original(self, *a, **kw)
+
+    monkeypatch.setattr(matplotlib.figure.Figure, "tight_layout", spy)
+
+    fig, ax = plt.subplots()
+    plot_pacf(
+        acf_df_datetime,
+        "time",
+        "value",
+        backend="matplotlib",
+        ax=ax,
+    )
+    assert len(tight_layout_called) == 0
+    plt.close(fig)
+
+
+def test_plot_pacf_ax_with_plotly_raises(acf_df_datetime):
+    """ax with backend='plotly' raises ValueError."""
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    with pytest.raises(ValueError, match="backend='plotly'"):
+        plot_pacf(
+            acf_df_datetime,
+            "time",
+            "value",
+            backend="plotly",
+            ax=ax,
+        )
+    plt.close(fig)
+
+
+def test_plot_pacf_ax_invalid_type_raises(acf_df_datetime):
+    """ax that is not an Axes instance raises TypeError."""
+    with pytest.raises(TypeError, match="matplotlib.axes.Axes"):
+        plot_pacf(
+            acf_df_datetime,
+            "time",
+            "value",
+            backend="matplotlib",
+            ax="not_an_axes",
+        )
+
+
+def test_plot_acf_pacf_ax_in_subplots(acf_df_datetime):
+    """ACF and PACF can share a 1x2 subplot figure."""
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    fig1 = plot_acf(
+        acf_df_datetime,
+        "time",
+        "value",
+        backend="matplotlib",
+        ax=axes[0],
+    )
+    fig2 = plot_pacf(
+        acf_df_datetime,
+        "time",
+        "value",
+        backend="matplotlib",
+        ax=axes[1],
+    )
+    assert fig1 is fig
+    assert fig2 is fig
+    # Both axes should have content (vlines create line collections)
+    assert axes[0].get_ylabel() == "acf"
+    assert axes[1].get_ylabel() == "pacf"
+    plt.close(fig)

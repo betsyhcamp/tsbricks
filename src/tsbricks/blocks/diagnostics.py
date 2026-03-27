@@ -13,6 +13,7 @@ from tsbricks.blocks.utils import (
     _DPI as _DPI,
     convert_to_pandas,
     pixels_to_figsize,
+    validate_ax,
     validate_backend,
     validate_column_exists,
     validate_dataframe,
@@ -229,6 +230,7 @@ def plot_acf(
     width: int = 800,
     height: int = 450,
     return_fig: bool = False,
+    ax: object | None = None,
 ) -> FigureLike | None:
     """Plot the autocorrelation function (ACF) for a single time series.
 
@@ -246,12 +248,18 @@ def plot_acf(
         bartlett_confint: If *True*, use Bartlett's formula for CI widths.
         zero: If *True*, include lag 0 in the plot.
         backend: ``"plotly"`` or ``"matplotlib"``.
-        width: Figure width in pixels.
-        height: Figure height in pixels.
+        width: Figure width in pixels. Ignored when *ax* is provided.
+        height: Figure height in pixels. Ignored when *ax* is provided.
         return_fig: If *True*, return the figure without rendering.
+            Ignored when *ax* is provided (always returns the parent
+            figure).
+        ax: Optional matplotlib Axes to draw on. When provided,
+            *width*, *height*, and *return_fig* are ignored; the
+            function draws on the given axes and returns its parent
+            figure. Only valid with ``backend="matplotlib"``.
 
     Returns:
-        *None* when *return_fig* is *False* (renders immediately),
+        *None* when *return_fig* is *False* and *ax* is *None*,
         otherwise the native backend figure object.
     """
     _validate_acf_pacf_inputs(
@@ -263,6 +271,7 @@ def plot_acf(
         height,
         alpha,
         lags,
+        ax,
     )
 
     result = _compute_acf(
@@ -279,8 +288,14 @@ def plot_acf(
 
     if backend == "matplotlib":
         fig = _plot_acf_pacf_matplotlib(
-            result, ylabel="acf", width=width, height=height
+            result,
+            ylabel="acf",
+            width=width,
+            height=height,
+            ax=ax,
         )
+        if ax is not None:
+            return fig
         if return_fig:
             return fig
         import matplotlib.pyplot as plt
@@ -307,6 +322,7 @@ def plot_pacf(
     width: int = 800,
     height: int = 450,
     return_fig: bool = False,
+    ax: object | None = None,
 ) -> FigureLike | None:
     """Plot the partial autocorrelation function (PACF) for a single time series.
 
@@ -323,12 +339,18 @@ def plot_pacf(
             default for ``pacf(method=...)``.
         zero: If *True*, include lag 0 in the plot.
         backend: ``"plotly"`` or ``"matplotlib"``.
-        width: Figure width in pixels.
-        height: Figure height in pixels.
+        width: Figure width in pixels. Ignored when *ax* is provided.
+        height: Figure height in pixels. Ignored when *ax* is provided.
         return_fig: If *True*, return the figure without rendering.
+            Ignored when *ax* is provided (always returns the parent
+            figure).
+        ax: Optional matplotlib Axes to draw on. When provided,
+            *width*, *height*, and *return_fig* are ignored; the
+            function draws on the given axes and returns its parent
+            figure. Only valid with ``backend="matplotlib"``.
 
     Returns:
-        *None* when *return_fig* is *False* (renders immediately),
+        *None* when *return_fig* is *False* and *ax* is *None*,
         otherwise the native backend figure object.
     """
     _validate_acf_pacf_inputs(
@@ -340,6 +362,7 @@ def plot_pacf(
         height,
         alpha,
         lags,
+        ax,
     )
 
     result = _compute_pacf(
@@ -354,8 +377,14 @@ def plot_pacf(
 
     if backend == "matplotlib":
         fig = _plot_acf_pacf_matplotlib(
-            result, ylabel="pacf", width=width, height=height
+            result,
+            ylabel="pacf",
+            width=width,
+            height=height,
+            ax=ax,
         )
+        if ax is not None:
+            return fig
         if return_fig:
             return fig
         import matplotlib.pyplot as plt
@@ -410,11 +439,12 @@ def _validate_acf_pacf_inputs(
     height: int,
     alpha: float,
     lags: int | None,
+    ax: object | None = None,
 ) -> None:
     """Validate inputs for plot_acf / plot_pacf.
 
     Checks DataFrame type, column existence, dtypes, missing values,
-    duplicates, and parameter constraints. Converts Polars to pandas
+    duplicates, parameter constraints, and ax. Converts Polars to pandas
     internally before column-level checks.
     """
     validate_dataframe(df)
@@ -436,6 +466,7 @@ def _validate_acf_pacf_inputs(
 
     validate_backend(backend)
     validate_dimensions(width, height)
+    validate_ax(ax, backend)
 
     # --- alpha: 0 < alpha < 1 ---
     if not (0 < alpha < 1):
@@ -582,12 +613,22 @@ def _plot_acf_pacf_matplotlib(
     ylabel: str,
     width: int,
     height: int,
+    ax: object | None = None,
 ) -> mpl_fig.Figure:
-    """Render a lollipop-style ACF/PACF plot with matplotlib."""
+    """Render a lollipop-style ACF/PACF plot with matplotlib.
+
+    When *ax* is provided, draws on the given axes without creating a
+    new figure or calling ``tight_layout``.
+    """
     import matplotlib.pyplot as plt
 
-    figsize = pixels_to_figsize(width, height)
-    fig, ax = plt.subplots(figsize=figsize, dpi=_DPI)
+    if ax is None:
+        figsize = pixels_to_figsize(width, height)
+        fig, ax = plt.subplots(figsize=figsize, dpi=_DPI)
+        owns_figure = True
+    else:
+        fig = ax.figure
+        owns_figure = False
 
     lags = result.lags
     values = result.values
@@ -622,7 +663,8 @@ def _plot_acf_pacf_matplotlib(
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
-    fig.tight_layout()
+    if owns_figure:
+        fig.tight_layout()
     return fig
 
 
