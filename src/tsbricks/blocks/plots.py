@@ -12,6 +12,7 @@ from tsbricks.blocks.utils import (
     _DPI,
     convert_to_pandas,
     pixels_to_figsize,
+    validate_ax,
     validate_backend,
     validate_column_exists,
     validate_dataframe,
@@ -99,11 +100,13 @@ def _validate_seasonal_inputs(
     alpha: float,
     palette: str | list,
     base_freq: str | None,
+    ax: object | None = None,
 ) -> None:
     """Validate inputs for plot_seasonal.
 
     Checks DataFrame type, column existence, dtypes, missing values,
-    duplicates, period, base_freq, alpha, palette, backend, and dimensions.
+    duplicates, period, base_freq, alpha, palette, backend, dimensions,
+    and ax.
     Converts Polars to pandas internally before column-level checks.
     """
     # --- DataFrame ---
@@ -160,9 +163,10 @@ def _validate_seasonal_inputs(
             f"palette must be a string or list, got {type(palette).__name__}."
         )
 
-    # --- backend / dimensions ---
+    # --- backend / dimensions / ax ---
     validate_backend(backend)
     validate_dimensions(width, height)
+    validate_ax(ax, backend)
 
 
 def _validate_base_freq(
@@ -598,16 +602,25 @@ def _plot_seasonal_matplotlib(
     alpha: float,
     width: int,
     height: int,
+    ax: object | None = None,
 ) -> object:
     """Build a seasonal line plot with Matplotlib.
 
     *data* must contain ``_season_id`` and ``_position`` columns.
     *colors* must have one entry per unique season, in chronological order.
+
+    When *ax* is provided, draws on the given axes without creating a
+    new figure or calling ``tight_layout``.
     """
     import matplotlib.pyplot as plt
 
-    figsize = pixels_to_figsize(width, height)
-    fig, ax = plt.subplots(figsize=figsize, dpi=_DPI)
+    if ax is None:
+        figsize = pixels_to_figsize(width, height)
+        fig, ax = plt.subplots(figsize=figsize, dpi=_DPI)
+        owns_figure = True
+    else:
+        fig = ax.figure
+        owns_figure = False
 
     seasons = list(dict.fromkeys(data["_season_id"]))
 
@@ -643,7 +656,8 @@ def _plot_seasonal_matplotlib(
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
-    fig.tight_layout()
+    if owns_figure:
+        fig.tight_layout()
     return fig
 
 
@@ -664,6 +678,7 @@ def plot_seasonal(
     base_freq: str | None = None,
     return_fig: bool = False,
     alpha: float = 0.8,
+    ax: object | None = None,
 ) -> object | None:
     """Plot a seasonal decomposition of a single time series.
 
@@ -678,16 +693,23 @@ def plot_seasonal(
             ``"month"``, ``"week"`` or aliases ``"Y"``, ``"Q"``, ``"M"``,
             ``"W"``) for calendar-aligned grouping, or an integer >= 2.
         backend: Plotting backend — ``"plotly"`` or ``"matplotlib"``.
-        width: Figure width in pixels.
-        height: Figure height in pixels.
+        width: Figure width in pixels. Ignored when *ax* is provided.
+        height: Figure height in pixels. Ignored when *ax* is provided.
         palette: Named colormap string or list of colors.
         base_freq: Pandas frequency alias. Required when *time_col* is
             datetime-like and *period* is an integer; inferred if omitted.
-        return_fig: If True, return the native figure object after rendering.
+        return_fig: If True, return the native figure object after
+            rendering. Ignored when *ax* is provided (always returns
+            the parent figure).
         alpha: Opacity for lines and markers (0–1).
+        ax: Optional matplotlib Axes to draw on. When provided,
+            *width*, *height*, and *return_fig* are ignored; the
+            function draws on the given axes and returns its parent
+            figure. Only valid with ``backend="matplotlib"``.
 
     Returns:
-        The native figure object if *return_fig* is True, otherwise None.
+        The native figure object if *return_fig* is True or *ax* is
+        provided, otherwise None.
     """
     _validate_seasonal_inputs(
         df,
@@ -700,6 +722,7 @@ def plot_seasonal(
         alpha,
         palette,
         base_freq,
+        ax,
     )
 
     pdf = convert_to_pandas(df)
@@ -716,12 +739,21 @@ def plot_seasonal(
             return fig
         fig.show()
     else:
-        import matplotlib.pyplot as plt
-
         fig = _plot_seasonal_matplotlib(
-            data, time_col, value_col, colors, alpha, width, height
+            data,
+            time_col,
+            value_col,
+            colors,
+            alpha,
+            width,
+            height,
+            ax,
         )
+        if ax is not None:
+            return fig
         if return_fig:
             return fig
+        import matplotlib.pyplot as plt
+
         plt.show()
     return None

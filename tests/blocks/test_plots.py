@@ -1828,3 +1828,188 @@ def test_resolve_base_freq_normalizes_anchored(seasonal_df_datetime):
     df = pd.DataFrame({"time": dates, "value": range(12)})
     resolved = _resolve_base_freq(df, "time", None)
     assert resolved == "QE"
+
+
+# =====================================================================
+# plot_seasonal — ax parameter tests
+# =====================================================================
+
+
+def test_plot_seasonal_ax_draws_on_provided_axes(
+    seasonal_df_datetime,
+    no_show,
+):
+    """When ax is provided, draws on it and returns its parent figure."""
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    returned = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="matplotlib",
+        ax=ax,
+    )
+    assert returned is fig
+    # 3 years of data → 3 lines
+    assert len(ax.lines) == 3
+    plt.close(fig)
+
+
+def test_plot_seasonal_ax_no_tight_layout_call(
+    seasonal_df_datetime,
+    no_show,
+    monkeypatch,
+):
+    """When ax is provided, tight_layout is not called."""
+    import matplotlib.pyplot as plt
+    import matplotlib.figure
+
+    tight_layout_called = []
+    original = matplotlib.figure.Figure.tight_layout
+
+    def spy(self, *a, **kw):
+        tight_layout_called.append(True)
+        return original(self, *a, **kw)
+
+    monkeypatch.setattr(
+        matplotlib.figure.Figure,
+        "tight_layout",
+        spy,
+    )
+
+    fig, ax = plt.subplots()
+    plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="matplotlib",
+        ax=ax,
+    )
+    assert len(tight_layout_called) == 0
+    plt.close(fig)
+
+
+def test_plot_seasonal_ax_does_not_create_new_figure(
+    seasonal_df_datetime,
+    no_show,
+    monkeypatch,
+):
+    """When ax is provided, plt.subplots is not called internally."""
+    import matplotlib.pyplot as plt
+
+    subplots_called = []
+    original = plt.subplots
+
+    def spy(*a, **kw):
+        subplots_called.append(True)
+        return original(*a, **kw)
+
+    monkeypatch.setattr(plt, "subplots", spy)
+
+    fig, ax = plt.subplots()
+    subplots_called.clear()  # reset after our own call
+    plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="matplotlib",
+        ax=ax,
+    )
+    assert len(subplots_called) == 0
+    plt.close(fig)
+
+
+def test_plot_seasonal_ax_with_plotly_raises(seasonal_df_datetime):
+    """ax with backend='plotly' raises ValueError."""
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    with pytest.raises(ValueError, match="backend='plotly'"):
+        plot_seasonal(
+            seasonal_df_datetime,
+            "time",
+            "value",
+            "year",
+            backend="plotly",
+            ax=ax,
+        )
+    plt.close(fig)
+
+
+def test_plot_seasonal_ax_invalid_type_raises(seasonal_df_datetime):
+    """ax that is not an Axes instance raises TypeError."""
+    with pytest.raises(TypeError, match="matplotlib.axes.Axes"):
+        plot_seasonal(
+            seasonal_df_datetime,
+            "time",
+            "value",
+            "year",
+            backend="matplotlib",
+            ax="not_an_axes",
+        )
+
+
+def test_plot_seasonal_ax_none_existing_behavior(
+    seasonal_df_datetime,
+    no_show,
+):
+    """ax=None preserves existing behavior (return_fig controls return)."""
+    import matplotlib.pyplot as plt
+
+    fig = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="matplotlib",
+        return_fig=True,
+        ax=None,
+    )
+    assert fig is not None
+    plt.close(fig)
+
+    result = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="matplotlib",
+        return_fig=False,
+        ax=None,
+    )
+    assert result is None
+    plt.close("all")
+
+
+def test_plot_seasonal_ax_in_subplots(seasonal_df_datetime, no_show):
+    """ax works correctly in a multi-subplot figure."""
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    fig1 = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="matplotlib",
+        ax=axes[0],
+    )
+    fig2 = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="matplotlib",
+        ax=axes[1],
+    )
+    # Both return the same parent figure
+    assert fig1 is fig
+    assert fig2 is fig
+    # Both axes have lines drawn
+    assert len(axes[0].lines) == 3
+    assert len(axes[1].lines) == 3
+    plt.close(fig)
