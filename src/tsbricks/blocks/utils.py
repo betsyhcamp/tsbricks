@@ -229,3 +229,31 @@ def validate_dimensions(width: int, height: int) -> None:
             )
         if param_val <= 0:
             raise ValueError(f"{param_name} must be positive, got {param_val}.")
+
+
+def validate_ax(ax, backend: str) -> None:
+    """Validate the matplotlib axes parameter.
+
+    When *ax* is not None, checks that the backend is ``"matplotlib"``
+    and that *ax* is a ``matplotlib.axes.Axes`` instance.
+
+    Args:
+        ax: A matplotlib Axes instance, or None.
+        backend: The plotting backend string.
+
+    Raises:
+        ValueError: If *ax* is provided with a non-matplotlib backend.
+        TypeError: If *ax* is not a matplotlib Axes instance.
+    """
+    if ax is None:
+        return
+    if backend != "matplotlib":
+        raise ValueError(
+            f"ax is only supported with backend='matplotlib', got backend='{backend}'."
+        )
+    from matplotlib.axes import Axes
+
+    if not isinstance(ax, Axes):
+        raise TypeError(
+            f"ax must be a matplotlib.axes.Axes instance, got {type(ax).__name__}."
+        )
