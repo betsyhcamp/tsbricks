@@ -2041,6 +2041,44 @@ def fiscal_df():
     return pd.DataFrame(rows)
 
 
+@pytest.fixture
+def fiscal_df_datetime():
+    """Weekly datetime DataFrame with a fiscal_year column.
+
+    Same shape as fiscal_df (FY2023=51 weeks, FY2024/FY2025=52 weeks)
+    but with datetime time column instead of integer YYYYWW.
+    """
+    rows = []
+    # FY2023: 51 weekly dates (starts 1 week late)
+    for i in range(51):
+        rows.append(
+            {
+                "time": pd.Timestamp("2023-01-08") + pd.Timedelta(weeks=i),
+                "value": float(i),
+                "fiscal_year": "FY2023",
+            }
+        )
+    # FY2024: 52 weekly dates (complete)
+    for i in range(52):
+        rows.append(
+            {
+                "time": pd.Timestamp("2024-01-01") + pd.Timedelta(weeks=i),
+                "value": float(i),
+                "fiscal_year": "FY2024",
+            }
+        )
+    # FY2025: 52 weekly dates (complete)
+    for i in range(52):
+        rows.append(
+            {
+                "time": pd.Timestamp("2025-01-01") + pd.Timedelta(weeks=i),
+                "value": float(i),
+                "fiscal_year": "FY2025",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 # =====================================================================
 # _assign_custom_seasons
 # =====================================================================
@@ -2446,3 +2484,33 @@ def test_matplotlib_date_ticks_with_ax(seasonal_df_datetime):
     tick_vals = ax.get_xticks()
     assert all(v > 10000 for v in tick_vals if v > 0)
     plt.close(fig)
+
+
+def test_tick_date_partial_first_season_with_season_col(fiscal_df_datetime):
+    """_tick_date uses dates from the longest season, not the first.
+
+    When the first custom season is incomplete (51 weeks) and later
+    seasons are complete (52 weeks), all positions should get dates
+    from a single complete season — no ~1-year jumps on the x-axis.
+    """
+    result = _compute_seasonal_data(
+        fiscal_df_datetime, "time", "value", None, None, season_col="fiscal_year"
+    )
+    tick_dates = result["_tick_date"].dropna()
+    years = tick_dates.dt.year.unique()
+    assert len(years) == 1, (
+        f"Expected tick dates from a single year, got {sorted(years)}"
+    )
+
+
+def test_assign_custom_seasons_rejects_null_season_col():
+    """_assign_custom_seasons raises ValueError when season_col has nulls."""
+    df = pd.DataFrame(
+        {
+            "time": range(10),
+            "value": range(10),
+            "season": ["A"] * 8 + [None, None],
+        }
+    )
+    with pytest.raises(ValueError, match="contains missing values"):
+        _assign_custom_seasons(df, "season")
