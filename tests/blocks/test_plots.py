@@ -10,6 +10,7 @@ import pytest
 
 from tsbricks.blocks.plots import (
     _assign_calendar_seasons,
+    _assign_custom_seasons,
     _assign_frequency_seasons,
     _assign_positional_seasons,
     _check_data_sufficiency,
@@ -305,8 +306,8 @@ def test_validate_seasonal_period_bool_rejected(seasonal_df_integer):
 
 
 def test_validate_seasonal_period_none_rejected(seasonal_df_integer):
-    """Raises TypeError when period is None."""
-    with pytest.raises(TypeError, match="period must be a string or integer"):
+    """Raises ValueError when neither period nor season_col is provided."""
+    with pytest.raises(ValueError, match="Either period or season_col"):
         _validate_seasonal_inputs(
             seasonal_df_integer, "time", "value", None, **_DEFAULTS
         )
@@ -2013,3 +2014,562 @@ def test_plot_seasonal_ax_in_subplots(seasonal_df_datetime, no_show):
     assert len(axes[0].lines) == 3
     assert len(axes[1].lines) == 3
     plt.close(fig)
+
+
+# =====================================================================
+# season_col — _assign_custom_seasons helper
+# =====================================================================
+
+
+@pytest.fixture
+def fiscal_df():
+    """Weekly integer DataFrame with a fiscal_year column.
+
+    3 fiscal years, 52 weeks each, except the first which has 51
+    (starts at week 2).
+    """
+    rows = []
+    # FY2023: weeks 2–52 (51 rows)
+    for w in range(2, 53):
+        rows.append({"time": 202300 + w, "value": float(w), "fiscal_year": "FY2023"})
+    # FY2024: weeks 1–52 (52 rows)
+    for w in range(1, 53):
+        rows.append({"time": 202400 + w, "value": float(w), "fiscal_year": "FY2024"})
+    # FY2025: weeks 1–52 (52 rows)
+    for w in range(1, 53):
+        rows.append({"time": 202500 + w, "value": float(w), "fiscal_year": "FY2025"})
+    return pd.DataFrame(rows)
+
+
+@pytest.fixture
+def fiscal_df_datetime():
+    """Weekly datetime DataFrame with a fiscal_year column.
+
+    Same shape as fiscal_df (FY2023=51 weeks, FY2024/FY2025=52 weeks)
+    but with datetime time column instead of integer YYYYWW.
+    """
+    rows = []
+    # FY2023: 51 weekly dates (starts 1 week late)
+    for i in range(51):
+        rows.append(
+            {
+                "time": pd.Timestamp("2023-01-08") + pd.Timedelta(weeks=i),
+                "value": float(i),
+                "fiscal_year": "FY2023",
+            }
+        )
+    # FY2024: 52 weekly dates (complete)
+    for i in range(52):
+        rows.append(
+            {
+                "time": pd.Timestamp("2024-01-01") + pd.Timedelta(weeks=i),
+                "value": float(i),
+                "fiscal_year": "FY2024",
+            }
+        )
+    # FY2025: 52 weekly dates (complete)
+    for i in range(52):
+        rows.append(
+            {
+                "time": pd.Timestamp("2025-01-01") + pd.Timedelta(weeks=i),
+                "value": float(i),
+                "fiscal_year": "FY2025",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+# =====================================================================
+# _assign_custom_seasons
+# =====================================================================
+
+
+def test_assign_custom_seasons_season_id(fiscal_df):
+    result = _assign_custom_seasons(fiscal_df, "fiscal_year")
+    assert "_season_id" in result.columns
+    assert set(result["_season_id"]) == {"FY2023", "FY2024", "FY2025"}
+
+
+def test_assign_custom_seasons_position_via_cumcount(fiscal_df):
+    result = _assign_custom_seasons(fiscal_df, "fiscal_year")
+    # FY2023 has 51 rows → positions 1–51
+    fy23 = result[result["_season_id"] == "FY2023"]
+    assert fy23["_position"].tolist() == list(range(1, 52))
+    # FY2024 has 52 rows → positions 1–52
+    fy24 = result[result["_season_id"] == "FY2024"]
+    assert fy24["_position"].tolist() == list(range(1, 53))
+
+
+def test_assign_custom_seasons_preserves_columns(fiscal_df):
+    result = _assign_custom_seasons(fiscal_df, "fiscal_year")
+    for col in fiscal_df.columns:
+        assert col in result.columns
+
+
+# =====================================================================
+# season_col — validation
+# =====================================================================
+
+
+def test_validate_season_col_and_period_raises(fiscal_df):
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        _validate_seasonal_inputs(
+            fiscal_df,
+            "time",
+            "value",
+            period=52,
+            season_col="fiscal_year",
+            **_DEFAULTS,
+        )
+
+
+def test_validate_neither_season_col_nor_period_raises(seasonal_df_datetime):
+    with pytest.raises(ValueError, match="Either period or season_col"):
+        _validate_seasonal_inputs(
+            seasonal_df_datetime,
+            "time",
+            "value",
+            period=None,
+            season_col=None,
+            **_DEFAULTS,
+        )
+
+
+def test_validate_missing_season_col_raises(fiscal_df):
+    with pytest.raises(ValueError, match="not_a_column"):
+        _validate_seasonal_inputs(
+            fiscal_df,
+            "time",
+            "value",
+            period=None,
+            season_col="not_a_column",
+            **_DEFAULTS,
+        )
+
+
+def test_validate_season_col_only_passes(fiscal_df):
+    _validate_seasonal_inputs(
+        fiscal_df,
+        "time",
+        "value",
+        period=None,
+        season_col="fiscal_year",
+        **_DEFAULTS,
+    )
+
+
+# =====================================================================
+# season_col — _compute_seasonal_data
+# =====================================================================
+
+
+def test_compute_seasonal_data_uses_custom_seasons(fiscal_df):
+    result = _compute_seasonal_data(
+        fiscal_df,
+        "time",
+        "value",
+        period=None,
+        base_freq=None,
+        season_col="fiscal_year",
+    )
+    assert set(result["_season_id"]) == {"FY2023", "FY2024", "FY2025"}
+
+
+def test_compute_seasonal_data_custom_position_aligns(fiscal_df):
+    """Position 1 in each season is the first row of that season."""
+    result = _compute_seasonal_data(
+        fiscal_df,
+        "time",
+        "value",
+        period=None,
+        base_freq=None,
+        season_col="fiscal_year",
+    )
+    for fy in ["FY2023", "FY2024", "FY2025"]:
+        season = result[result["_season_id"] == fy]
+        assert season["_position"].iloc[0] == 1
+
+
+def test_compute_seasonal_data_infers_period_from_max_group(fiscal_df):
+    """Sufficiency check uses inferred period (52) from largest group."""
+    result = _compute_seasonal_data(
+        fiscal_df,
+        "time",
+        "value",
+        period=None,
+        base_freq=None,
+        season_col="fiscal_year",
+    )
+    assert result["_season_id"].nunique() == 3
+
+
+# =====================================================================
+# season_col — plot_seasonal public API
+# =====================================================================
+
+
+def test_plot_seasonal_season_col_matplotlib(fiscal_df):
+    import matplotlib.pyplot as plt
+
+    fig = plot_seasonal(
+        fiscal_df,
+        "time",
+        "value",
+        season_col="fiscal_year",
+        backend="matplotlib",
+        return_fig=True,
+    )
+    assert fig is not None
+    ax = fig.axes[0]
+    assert len(ax.lines) == 3
+    plt.close(fig)
+
+
+def test_plot_seasonal_season_col_plotly(fiscal_df):
+    fig = plot_seasonal(
+        fiscal_df,
+        "time",
+        "value",
+        season_col="fiscal_year",
+        backend="plotly",
+        return_fig=True,
+    )
+    assert len(fig.data) == 3
+
+
+def test_plot_seasonal_season_col_polars(fiscal_df):
+    import polars as pl
+
+    pl_df = pl.from_pandas(fiscal_df)
+    fig = plot_seasonal(
+        pl_df,
+        "time",
+        "value",
+        season_col="fiscal_year",
+        backend="matplotlib",
+        return_fig=True,
+    )
+    assert fig is not None
+    import matplotlib.pyplot as plt
+
+    plt.close(fig)
+
+
+def test_plot_seasonal_season_col_partial_first_aligns(fiscal_df):
+    """With season_col, a short first season doesn't misalign later ones."""
+    import matplotlib.pyplot as plt
+
+    fig = plot_seasonal(
+        fiscal_df,
+        "time",
+        "value",
+        season_col="fiscal_year",
+        backend="matplotlib",
+        return_fig=True,
+    )
+    ax = fig.axes[0]
+    lines = ax.lines
+    # FY2023 has 51 points, FY2024 and FY2025 have 52
+    x_lengths = [len(line.get_xdata()) for line in lines]
+    assert sorted(x_lengths) == [51, 52, 52]
+    plt.close(fig)
+
+
+def test_plot_seasonal_season_col_with_ax(fiscal_df):
+    """season_col works with the ax parameter."""
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    returned = plot_seasonal(
+        fiscal_df,
+        "time",
+        "value",
+        season_col="fiscal_year",
+        backend="matplotlib",
+        ax=ax,
+    )
+    assert returned is fig
+    assert len(ax.lines) == 3
+    plt.close(fig)
+
+
+# =====================================================================
+# Partial first season warning (positional grouping)
+# =====================================================================
+
+
+def test_no_partial_warning_on_complete_seasons():
+    """No warning when all seasons are complete."""
+    df = pd.DataFrame(
+        {
+            "time": range(104),
+            "value": np.random.default_rng(42).normal(size=104),
+        }
+    )
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        _compute_seasonal_data(df, "time", "value", period=52, base_freq=None)
+    partial_warnings = [x for x in w if "Season boundaries" in str(x.message)]
+    assert len(partial_warnings) == 0
+
+
+def test_warns_when_last_season_short():
+    """Warning fires when rows aren't evenly divisible by period.
+
+    With 155 rows and period=52, the last season has 51 rows.
+    """
+    df = pd.DataFrame(
+        {
+            "time": range(155),
+            "value": np.random.default_rng(42).normal(size=155),
+        }
+    )
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        _compute_seasonal_data(df, "time", "value", period=52, base_freq=None)
+    partial_warnings = [x for x in w if "Season boundaries" in str(x.message)]
+    assert len(partial_warnings) == 1
+    assert "51 observations" in str(partial_warnings[0].message)
+    assert "season_col" in str(partial_warnings[0].message)
+
+
+def test_no_partial_warning_when_season_col_provided(fiscal_df):
+    """No partial season warning when season_col handles grouping."""
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        _compute_seasonal_data(
+            fiscal_df,
+            "time",
+            "value",
+            period=None,
+            base_freq=None,
+            season_col="fiscal_year",
+        )
+    partial_warnings = [x for x in w if "Season boundaries" in str(x.message)]
+    assert len(partial_warnings) == 0
+
+
+# =====================================================================
+# Date x-tick labels (Phase 3)
+# =====================================================================
+
+
+def test_compute_seasonal_data_adds_tick_date_for_datetime():
+    """_tick_date column is added when time_col is datetime."""
+    dates = pd.date_range("2020-01-01", periods=36, freq="MS")
+    df = pd.DataFrame(
+        {"time": dates, "value": np.random.default_rng(42).normal(size=36)}
+    )
+    result = _compute_seasonal_data(df, "time", "value", "year", None)
+    assert "_tick_date" in result.columns
+    assert result["_tick_date"].notna().all()
+
+
+def test_compute_seasonal_data_no_tick_date_for_integer():
+    """_tick_date column is NOT added when time_col is integer."""
+    df = pd.DataFrame(
+        {"time": range(20), "value": np.random.default_rng(42).normal(size=20)}
+    )
+    result = _compute_seasonal_data(df, "time", "value", 5, None)
+    assert "_tick_date" not in result.columns
+
+
+def test_matplotlib_date_ticks_for_datetime(seasonal_df_datetime):
+    """Matplotlib x-axis uses dates when ds is datetime."""
+    import matplotlib.pyplot as plt
+
+    fig = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="matplotlib",
+        return_fig=True,
+    )
+    ax = fig.axes[0]
+    # x-axis tick values should be matplotlib date numbers (floats),
+    # not small integers like _position (1, 2, 3, ...)
+    tick_vals = ax.get_xticks()
+    assert all(v > 10000 for v in tick_vals if v > 0)
+    plt.close(fig)
+
+
+def test_matplotlib_positional_ticks_for_integer(seasonal_df_integer):
+    """Matplotlib x-axis uses positions when ds is integer."""
+    import matplotlib.pyplot as plt
+
+    fig = plot_seasonal(
+        seasonal_df_integer,
+        "time",
+        "value",
+        5,
+        backend="matplotlib",
+        return_fig=True,
+    )
+    ax = fig.axes[0]
+    line_xdata = ax.lines[0].get_xdata()
+    assert max(line_xdata) <= 5
+    plt.close(fig)
+
+
+def test_plotly_date_ticks_for_datetime(seasonal_df_datetime):
+    """Plotly x-axis uses dates when ds is datetime."""
+    fig = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="plotly",
+        return_fig=True,
+    )
+    x_vals = fig.data[0].x
+    # Should be datetime64, not small integers
+    assert np.issubdtype(np.asarray(x_vals).dtype, np.datetime64)
+
+
+def test_plotly_positional_ticks_for_integer(seasonal_df_integer):
+    """Plotly x-axis uses positions when ds is integer."""
+    fig = plot_seasonal(
+        seasonal_df_integer,
+        "time",
+        "value",
+        5,
+        backend="plotly",
+        return_fig=True,
+    )
+    x_vals = fig.data[0].x
+    assert np.issubdtype(np.asarray(x_vals).dtype, np.integer)
+
+
+def test_matplotlib_date_ticks_with_season_col():
+    """Date ticks work when season_col is provided with datetime ds."""
+    import matplotlib.pyplot as plt
+
+    dates = pd.date_range("2020-01-01", periods=24, freq="MS")
+    df = pd.DataFrame(
+        {
+            "time": dates,
+            "value": np.random.default_rng(42).normal(size=24),
+            "year": [str(d.year) for d in dates],
+        }
+    )
+    fig = plot_seasonal(
+        df,
+        "time",
+        "value",
+        season_col="year",
+        backend="matplotlib",
+        return_fig=True,
+    )
+    ax = fig.axes[0]
+    tick_vals = ax.get_xticks()
+    assert all(v > 10000 for v in tick_vals if v > 0)
+    plt.close(fig)
+
+
+def test_matplotlib_date_ticks_with_ax(seasonal_df_datetime):
+    """Date ticks work with the ax parameter."""
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    returned = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="matplotlib",
+        ax=ax,
+    )
+    assert returned is fig
+    tick_vals = ax.get_xticks()
+    assert all(v > 10000 for v in tick_vals if v > 0)
+    plt.close(fig)
+
+
+def test_tick_date_partial_first_season_with_season_col(fiscal_df_datetime):
+    """_tick_date uses dates from the longest season, not the first.
+
+    When the first custom season is incomplete (51 weeks) and later
+    seasons are complete (52 weeks), all positions should get dates
+    from a single complete season — no ~1-year jumps on the x-axis.
+    """
+    result = _compute_seasonal_data(
+        fiscal_df_datetime, "time", "value", None, None, season_col="fiscal_year"
+    )
+    tick_dates = result["_tick_date"].dropna()
+    years = tick_dates.dt.year.unique()
+    assert len(years) == 1, (
+        f"Expected tick dates from a single year, got {sorted(years)}"
+    )
+
+
+def test_assign_custom_seasons_rejects_null_season_col():
+    """_assign_custom_seasons raises ValueError when season_col has nulls."""
+    df = pd.DataFrame(
+        {
+            "time": range(10),
+            "value": range(10),
+            "season": ["A"] * 8 + [None, None],
+        }
+    )
+    with pytest.raises(ValueError, match="contains missing values"):
+        _assign_custom_seasons(df, "season")
+
+
+# =====================================================================
+# Plotly datetime hover labels (Phase 4)
+# =====================================================================
+
+
+def test_plotly_hover_shows_date_for_datetime(seasonal_df_datetime):
+    """Plotly traces have customdata with original ds dates when datetime."""
+    fig = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="plotly",
+        return_fig=True,
+    )
+    trace = fig.data[0]
+    assert trace.customdata is not None
+    assert np.issubdtype(np.asarray(trace.customdata).dtype, np.datetime64)
+    assert "%{customdata" in trace.hovertemplate
+
+
+def test_plotly_hover_unchanged_for_integer(seasonal_df_integer):
+    """Plotly traces have no customdata/hovertemplate when ds is integer."""
+    fig = plot_seasonal(
+        seasonal_df_integer,
+        "time",
+        "value",
+        5,
+        backend="plotly",
+        return_fig=True,
+    )
+    trace = fig.data[0]
+    assert trace.customdata is None
+    assert trace.hovertemplate is None
+
+
+def test_plotly_hover_with_season_col():
+    """Plotly hover shows dates when season_col is used with datetime ds."""
+    dates = pd.date_range("2020-01-01", periods=24, freq="MS")
+    df = pd.DataFrame(
+        {
+            "time": dates,
+            "value": np.random.default_rng(42).normal(size=24),
+            "year": [str(d.year) for d in dates],
+        }
+    )
+    fig = plot_seasonal(
+        df,
+        "time",
+        "value",
+        season_col="year",
+        backend="plotly",
+        return_fig=True,
+    )
+    trace = fig.data[0]
+    assert trace.customdata is not None
+    assert "%{customdata" in trace.hovertemplate
