@@ -481,6 +481,23 @@ def _compute_seasonal_data(
             result = _assign_frequency_seasons(pdf, time_col, period, resolved)
         else:
             result = _assign_positional_seasons(pdf, period)
+            # Warn if total rows aren't evenly divisible by period.
+            # Positional grouping naively chunks rows into groups of
+            # ``period``, so uneven division means the last season is
+            # short. This *may* indicate misaligned boundaries (e.g.
+            # first year of YYYYWW data starting at week 02), but
+            # positional grouping can't detect which season is off.
+            n_rows = len(result)
+            int_period = int(period)
+            if n_rows >= int_period and n_rows % int_period != 0:
+                last_season_size = n_rows % int_period
+                warnings.warn(
+                    f"Last season has {last_season_size} observations "
+                    f"(expected {int_period}). Season boundaries "
+                    "may be misaligned. Consider using season_col "
+                    "to define seasons explicitly.",
+                    stacklevel=2,
+                )
 
         _check_data_sufficiency(result, period)
 
