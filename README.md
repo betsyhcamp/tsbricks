@@ -20,20 +20,20 @@ The package is organized into three namespaces with a strict one-way dependency 
 Install the latest release from GitHub:
 
 ```bash
-uv add git+https://github.com/betsyhcamp/tsbricks.git@v0.2.0
+uv add git+https://github.com/betsyhcamp/tsbricks.git@v0.3.0
 ```
 
 With optional extras:
 
 ```bash
 # Matplotlib plotting backend
-uv add "tsbricks[matplotlib] @ git+https://github.com/betsyhcamp/tsbricks.git@v0.2.0"
+uv add "tsbricks[matplotlib] @ git+https://github.com/betsyhcamp/tsbricks.git@v0.3.0"
 
 # Polars interop
-uv add "tsbricks[polars] @ git+https://github.com/betsyhcamp/tsbricks.git@v0.2.0"
+uv add "tsbricks[polars] @ git+https://github.com/betsyhcamp/tsbricks.git@v0.3.0"
 
 # Multiple extras
-uv add "tsbricks[matplotlib,polars] @ git+https://github.com/betsyhcamp/tsbricks.git@v0.2.0"
+uv add "tsbricks[matplotlib,polars] @ git+https://github.com/betsyhcamp/tsbricks.git@v0.3.0"
 ```
 
 ## Quick start

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tsbricks"
-version = "0.2.0"
+version = "0.3.0"
 description = ""
 authors = [
     { name = "Elizabeth H. Camp", email = "betsy.h.camp@gmail.com" }
