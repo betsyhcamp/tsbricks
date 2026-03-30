@@ -93,7 +93,7 @@ def _validate_seasonal_inputs(
     df: DataFrameLike,
     time_col: str,
     value_col: str,
-    period: str | int,
+    period: str | int | None,
     backend: str,
     width: int,
     height: int,
@@ -101,12 +101,13 @@ def _validate_seasonal_inputs(
     palette: str | list,
     base_freq: str | None,
     ax: object | None = None,
+    season_col: str | None = None,
 ) -> None:
     """Validate inputs for plot_seasonal.
 
     Checks DataFrame type, column existence, dtypes, missing values,
     duplicates, period, base_freq, alpha, palette, backend, dimensions,
-    and ax.
+    ax, and season_col.
     Converts Polars to pandas internally before column-level checks.
     """
     # --- DataFrame ---
@@ -128,30 +129,45 @@ def _validate_seasonal_inputs(
     # --- Duplicate time_col values (error) ---
     validate_no_duplicates(pdf, time_col, "time_col")
 
-    # --- period ---
-    is_datetime = _is_datetime_time_col(pdf, time_col)
-
-    if isinstance(period, str):
-        if not is_datetime:
-            raise ValueError(
-                f"Named period '{period}' is only allowed for datetime-like "
-                f"time_col, but time_col '{time_col}' is integer dtype."
-            )
-        if period not in _NAMED_PERIODS:
-            raise ValueError(
-                f"Invalid named period '{period}'. "
-                f"Must be one of {sorted(_NAMED_PERIODS)}."
-            )
-    elif isinstance(period, (int, np.integer)) and not isinstance(period, bool):
-        if period < 2:
-            raise ValueError(f"Integer period must be >= 2, got {period}.")
-    else:
-        raise TypeError(
-            f"period must be a string or integer, got {type(period).__name__}."
+    # --- season_col / period mutual exclusivity ---
+    if season_col is not None and period is not None:
+        raise ValueError(
+            "season_col and period are mutually exclusive. "
+            "Provide one or the other, not both."
         )
 
-    # --- base_freq ---
-    _validate_base_freq(pdf, time_col, period, base_freq)
+    if season_col is None and period is None:
+        raise ValueError("Either period or season_col must be provided.")
+
+    # --- season_col ---
+    if season_col is not None:
+        validate_column_exists(pdf, season_col, "season_col")
+
+    # --- period ---
+    if period is not None:
+        is_datetime = _is_datetime_time_col(pdf, time_col)
+
+        if isinstance(period, str):
+            if not is_datetime:
+                raise ValueError(
+                    f"Named period '{period}' is only allowed for datetime-like "
+                    f"time_col, but time_col '{time_col}' is integer dtype."
+                )
+            if period not in _NAMED_PERIODS:
+                raise ValueError(
+                    f"Invalid named period '{period}'. "
+                    f"Must be one of {sorted(_NAMED_PERIODS)}."
+                )
+        elif isinstance(period, (int, np.integer)) and not isinstance(period, bool):
+            if period < 2:
+                raise ValueError(f"Integer period must be >= 2, got {period}.")
+        else:
+            raise TypeError(
+                f"period must be a string or integer, got {type(period).__name__}."
+            )
+
+        # --- base_freq ---
+        _validate_base_freq(pdf, time_col, period, base_freq)
 
     # --- alpha ---
     if not (0 <= alpha <= 1):
@@ -319,6 +335,31 @@ def _assign_positional_seasons(
     return pdf
 
 
+def _assign_custom_seasons(
+    df: pd.DataFrame,
+    season_col: str,
+) -> pd.DataFrame:
+    """Assign _season_id and _position via a user-provided season column.
+
+    Used when the caller supplies ``season_col`` to explicitly define
+    season boundaries (e.g. fiscal year).  Position is derived from
+    row order within each season group via ``cumcount()``, so seasons
+    are aligned by position, not by calendar date.  If an early season
+    is incomplete (e.g. missing its first observation), the caller
+    should pad it with a NaN-valued row so that positions align with
+    complete seasons.
+    """
+    pdf = df.copy()
+    if pdf[season_col].isna().any():
+        raise ValueError(
+            f"season_col '{season_col}' contains missing values. "
+            "All rows must have a valid season identifier."
+        )
+    pdf["_season_id"] = pdf[season_col].astype(str)
+    pdf["_position"] = pdf.groupby("_season_id", sort=False).cumcount() + 1
+    return pdf
+
+
 def _assign_frequency_seasons(
     df: pd.DataFrame,
     time_col: str,
@@ -408,8 +449,9 @@ def _compute_seasonal_data(
     df: pd.DataFrame,
     time_col: str,
     value_col: str,
-    period: str | int,
+    period: str | int | None,
     base_freq: str | None,
+    season_col: str | None = None,
 ) -> pd.DataFrame:
     """Compute season identity and within-season positions.
 
@@ -433,17 +475,52 @@ def _compute_seasonal_data(
             stacklevel=2,
         )
 
-    is_datetime = _is_datetime_time_col(pdf, time_col)
-
-    if isinstance(period, str):
-        result = _assign_calendar_seasons(pdf, time_col, period)
-    elif is_datetime:
-        resolved = _resolve_base_freq(pdf, time_col, base_freq)
-        result = _assign_frequency_seasons(pdf, time_col, period, resolved)
+    if season_col is not None:
+        result = _assign_custom_seasons(pdf, season_col)
+        # Infer period from max group size for sufficiency check
+        inferred_period = result.groupby("_season_id", sort=False).size().max()
+        _check_data_sufficiency(result, int(inferred_period))
     else:
-        result = _assign_positional_seasons(pdf, period)
+        is_datetime = _is_datetime_time_col(pdf, time_col)
 
-    _check_data_sufficiency(result, period)
+        if isinstance(period, str):
+            result = _assign_calendar_seasons(pdf, time_col, period)
+        elif is_datetime:
+            resolved = _resolve_base_freq(pdf, time_col, base_freq)
+            result = _assign_frequency_seasons(pdf, time_col, period, resolved)
+        else:
+            result = _assign_positional_seasons(pdf, period)
+            # Warn if total rows aren't evenly divisible by period.
+            # Positional grouping naively chunks rows into groups of
+            # ``period``, so uneven division means the last season is
+            # short. This *may* indicate misaligned boundaries (e.g.
+            # first year of YYYYWW data starting at week 02), but
+            # positional grouping can't detect which season is off.
+            n_rows = len(result)
+            int_period = int(period)
+            if n_rows >= int_period and n_rows % int_period != 0:
+                last_season_size = n_rows % int_period
+                warnings.warn(
+                    f"Last season has {last_season_size} observations "
+                    f"(expected {int_period}). Season boundaries "
+                    "may be misaligned. Consider using season_col "
+                    "to define seasons explicitly.",
+                    stacklevel=2,
+                )
+
+        _check_data_sufficiency(result, period)
+
+    # When time_col is datetime, map each _position to a representative
+    # date so renderers can use date-based x-axes.  We pick dates from
+    # the longest season so that every position gets a date from a single
+    # continuous season (avoids ~1-year jumps when the first season is
+    # incomplete, e.g. fiscal year starting mid-cycle).
+    if _is_datetime_time_col(result, time_col):
+        season_sizes = result.groupby("_season_id", sort=False).size()
+        longest_season = season_sizes.idxmax()
+        longest = result.loc[result["_season_id"] == longest_season]
+        pos_to_date = longest.groupby("_position", sort=False)[time_col].first()
+        result["_tick_date"] = result["_position"].map(pos_to_date)
 
     return result
 
@@ -542,22 +619,28 @@ def _plot_seasonal_plotly(
     import plotly.graph_objects as go
 
     seasons = list(dict.fromkeys(data["_season_id"]))  # unique, preserving order
+    use_dates = "_tick_date" in data.columns
+    x_col = "_tick_date" if use_dates else "_position"
 
     fig = go.Figure()
     for season, color in zip(seasons, colors):
         mask = data["_season_id"] == season
-        fig.add_trace(
-            go.Scatter(
-                x=data.loc[mask, "_position"],
-                y=data.loc[mask, value_col],
-                mode="lines+markers",
-                name=season,
-                line=dict(color=color, width=_LINEWIDTH),
-                marker=dict(color=color, size=_MARKER_SIZE_PLOTLY),
-                opacity=alpha,
-                connectgaps=False,
-            )
+        trace_kwargs: dict = dict(
+            x=data.loc[mask, x_col],
+            y=data.loc[mask, value_col],
+            mode="lines+markers",
+            name=season,
+            line=dict(color=color, width=_LINEWIDTH),
+            marker=dict(color=color, size=_MARKER_SIZE_PLOTLY),
+            opacity=alpha,
+            connectgaps=False,
         )
+        if use_dates:
+            trace_kwargs["customdata"] = data.loc[mask, time_col].values
+            trace_kwargs["hovertemplate"] = (
+                "%{customdata}<br>%{y}<extra>%{fullData.name}</extra>"
+            )
+        fig.add_trace(go.Scatter(**trace_kwargs))
 
     _grid_color = "rgba(220,220,220,0.25)"
     fig.update_layout(
@@ -623,11 +706,13 @@ def _plot_seasonal_matplotlib(
         owns_figure = False
 
     seasons = list(dict.fromkeys(data["_season_id"]))
+    use_dates = "_tick_date" in data.columns
 
     for season, color in zip(seasons, colors):
         mask = data["_season_id"] == season
+        x_col = "_tick_date" if use_dates else "_position"
         ax.plot(
-            data.loc[mask, "_position"].values,
+            data.loc[mask, x_col].values,
             data.loc[mask, value_col].values,
             marker="o",
             markersize=3.5,
@@ -639,6 +724,9 @@ def _plot_seasonal_matplotlib(
 
     ax.set_xlabel(f"time ({time_col})")
     ax.set_ylabel(value_col)
+
+    if use_dates:
+        fig.autofmt_xdate()
 
     ax.grid(True, color=(0.86, 0.86, 0.86, 0.25), linewidth=0.5)
     ax.set_axisbelow(True)
@@ -670,7 +758,7 @@ def plot_seasonal(
     df: DataFrameLike,
     time_col: str,
     value_col: str,
-    period: str | int,
+    period: str | int | None = None,
     backend: str = "plotly",
     width: int = 800,
     height: int = 450,
@@ -679,6 +767,7 @@ def plot_seasonal(
     return_fig: bool = False,
     alpha: float = 0.8,
     ax: object | None = None,
+    season_col: str | None = None,
 ) -> object | None:
     """Plot a seasonal decomposition of a single time series.
 
@@ -692,6 +781,7 @@ def plot_seasonal(
         period: Season length. Named string (``"year"``, ``"quarter"``,
             ``"month"``, ``"week"`` or aliases ``"Y"``, ``"Q"``, ``"M"``,
             ``"W"``) for calendar-aligned grouping, or an integer >= 2.
+            Mutually exclusive with *season_col*.
         backend: Plotting backend — ``"plotly"`` or ``"matplotlib"``.
         width: Figure width in pixels. Ignored when *ax* is provided.
         height: Figure height in pixels. Ignored when *ax* is provided.
@@ -706,6 +796,18 @@ def plot_seasonal(
             *width*, *height*, and *return_fig* are ignored; the
             function draws on the given axes and returns its parent
             figure. Only valid with ``backend="matplotlib"``.
+        season_col: Column name that explicitly defines season
+            boundaries (e.g. ``"fiscal_year"``). When provided,
+            *period* is inferred from the largest season group.
+            Mutually exclusive with *period*.
+
+            Positions are assigned by row order within each season
+            (1, 2, 3, ...), so all seasons must start at the same
+            logical point.  If the first season is incomplete (e.g.
+            a fiscal year starting at week 2), pad it with a row
+            whose *value_col* is ``NaN`` so that positions align
+            across seasons.  The missing value will appear as a gap
+            in the plot.
 
     Returns:
         The native figure object if *return_fig* is True or *ax* is
@@ -723,10 +825,13 @@ def plot_seasonal(
         palette,
         base_freq,
         ax,
+        season_col,
     )
 
     pdf = convert_to_pandas(df)
-    data = _compute_seasonal_data(pdf, time_col, value_col, period, base_freq)
+    data = _compute_seasonal_data(
+        pdf, time_col, value_col, period, base_freq, season_col
+    )
 
     n_seasons = data["_season_id"].nunique()
     colors = _sample_colors(palette, n_seasons, backend)
