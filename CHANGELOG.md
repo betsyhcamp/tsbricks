@@ -7,6 +7,25 @@ and this project adheres to **Semantic Versioning** (https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-29
+
+### Added
+
+- **`ax` parameter for `plot_acf` and `plot_pacf`** — Draw onto a user-provided matplotlib Axes for subplot integration.
+- **`season_col` parameter for `plot_seasonal`** — Explicit season grouping via a column (e.g. fiscal year), mutually exclusive with `period`. Period is inferred from the largest season group.
+- **Partial season warning** — `plot_seasonal` warns when positional grouping (integer `ds`, no `season_col`) produces an uneven last season, suggesting `season_col` as a fix.
+- **Date x-tick labels** — `plot_seasonal` uses date-based x-axis labels when `ds` is datetime on both matplotlib and plotly backends; integer `ds` retains positional ticks.
+- **Plotly hover labels** — `plot_seasonal` shows original `ds` date on hover when `ds` is datetime, with auto-formatting for any granularity.
+- **Null `season_col` validation** — `plot_seasonal` raises `ValueError` when `season_col` contains missing values.
+
+### Fixed
+
+- **`_tick_date` partial-season bug** — Representative tick dates are now derived from the longest season, preventing ~1-year x-axis jumps when the first custom season is incomplete.
+
+### Changed
+
+- **Documentation** — Added §4.7 (Plots) to `PACKAGE_MAINTAINER_SPEC.md`; updated `plot_seasonal` and `_assign_custom_seasons` docstrings with alignment guidance for incomplete first seasons.
+
 ## [0.2.0] - 2026-03-25
 
 ### Added
@@ -53,4 +72,5 @@ Guidelines:
 
 [0.1.0]: https://github.com/betsyhcamp/tsbricks/releases/tag/v0.1.0
 [0.2.0]: https://github.com/betsyhcamp/tsbricks/releases/tag/v0.2.0
-[unreleased]: https://github.com/betsyhcamp/tsbricks/compare/v0.2.0...HEAD
+[0.3.0]: https://github.com/betsyhcamp/tsbricks/releases/tag/v0.3.0
+[unreleased]: https://github.com/betsyhcamp/tsbricks/compare/v0.3.0...HEAD
