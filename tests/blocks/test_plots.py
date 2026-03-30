@@ -2514,3 +2514,62 @@ def test_assign_custom_seasons_rejects_null_season_col():
     )
     with pytest.raises(ValueError, match="contains missing values"):
         _assign_custom_seasons(df, "season")
+
+
+# =====================================================================
+# Plotly datetime hover labels (Phase 4)
+# =====================================================================
+
+
+def test_plotly_hover_shows_date_for_datetime(seasonal_df_datetime):
+    """Plotly traces have customdata with original ds dates when datetime."""
+    fig = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="plotly",
+        return_fig=True,
+    )
+    trace = fig.data[0]
+    assert trace.customdata is not None
+    assert np.issubdtype(np.asarray(trace.customdata).dtype, np.datetime64)
+    assert "%{customdata" in trace.hovertemplate
+
+
+def test_plotly_hover_unchanged_for_integer(seasonal_df_integer):
+    """Plotly traces have no customdata/hovertemplate when ds is integer."""
+    fig = plot_seasonal(
+        seasonal_df_integer,
+        "time",
+        "value",
+        5,
+        backend="plotly",
+        return_fig=True,
+    )
+    trace = fig.data[0]
+    assert trace.customdata is None
+    assert trace.hovertemplate is None
+
+
+def test_plotly_hover_with_season_col():
+    """Plotly hover shows dates when season_col is used with datetime ds."""
+    dates = pd.date_range("2020-01-01", periods=24, freq="MS")
+    df = pd.DataFrame(
+        {
+            "time": dates,
+            "value": np.random.default_rng(42).normal(size=24),
+            "year": [str(d.year) for d in dates],
+        }
+    )
+    fig = plot_seasonal(
+        df,
+        "time",
+        "value",
+        season_col="year",
+        backend="plotly",
+        return_fig=True,
+    )
+    trace = fig.data[0]
+    assert trace.customdata is not None
+    assert "%{customdata" in trace.hovertemplate
