@@ -638,7 +638,7 @@ def _plot_seasonal_plotly(
         if use_dates:
             trace_kwargs["customdata"] = data.loc[mask, time_col].values
             trace_kwargs["hovertemplate"] = (
-                "%{customdata|%Y-%m-%d}<br>%{y}<extra>%{fullData.name}</extra>"
+                "%{customdata}<br>%{y}<extra>%{fullData.name}</extra>"
             )
         fig.add_trace(go.Scatter(**trace_kwargs))
 
