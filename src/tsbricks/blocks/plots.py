@@ -625,18 +625,22 @@ def _plot_seasonal_plotly(
     fig = go.Figure()
     for season, color in zip(seasons, colors):
         mask = data["_season_id"] == season
-        fig.add_trace(
-            go.Scatter(
-                x=data.loc[mask, x_col],
-                y=data.loc[mask, value_col],
-                mode="lines+markers",
-                name=season,
-                line=dict(color=color, width=_LINEWIDTH),
-                marker=dict(color=color, size=_MARKER_SIZE_PLOTLY),
-                opacity=alpha,
-                connectgaps=False,
-            )
+        trace_kwargs: dict = dict(
+            x=data.loc[mask, x_col],
+            y=data.loc[mask, value_col],
+            mode="lines+markers",
+            name=season,
+            line=dict(color=color, width=_LINEWIDTH),
+            marker=dict(color=color, size=_MARKER_SIZE_PLOTLY),
+            opacity=alpha,
+            connectgaps=False,
         )
+        if use_dates:
+            trace_kwargs["customdata"] = data.loc[mask, time_col].values
+            trace_kwargs["hovertemplate"] = (
+                "%{customdata|%Y-%m-%d}<br>%{y}<extra>%{fullData.name}</extra>"
+            )
+        fig.add_trace(go.Scatter(**trace_kwargs))
 
     _grid_color = "rgba(220,220,220,0.25)"
     fig.update_layout(
