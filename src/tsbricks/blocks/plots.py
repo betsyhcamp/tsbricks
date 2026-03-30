@@ -343,9 +343,18 @@ def _assign_custom_seasons(
 
     Used when the caller supplies ``season_col`` to explicitly define
     season boundaries (e.g. fiscal year).  Position is derived from
-    row order within each season group.
+    row order within each season group via ``cumcount()``, so seasons
+    are aligned by position, not by calendar date.  If an early season
+    is incomplete (e.g. missing its first observation), the caller
+    should pad it with a NaN-valued row so that positions align with
+    complete seasons.
     """
     pdf = df.copy()
+    if pdf[season_col].isna().any():
+        raise ValueError(
+            f"season_col '{season_col}' contains missing values. "
+            "All rows must have a valid season identifier."
+        )
     pdf["_season_id"] = pdf[season_col].astype(str)
     pdf["_position"] = pdf.groupby("_season_id", sort=False).cumcount() + 1
     return pdf
@@ -502,9 +511,15 @@ def _compute_seasonal_data(
         _check_data_sufficiency(result, period)
 
     # When time_col is datetime, map each _position to a representative
-    # date (first occurrence) so renderers can use date-based x-axes.
+    # date so renderers can use date-based x-axes.  We pick dates from
+    # the longest season so that every position gets a date from a single
+    # continuous season (avoids ~1-year jumps when the first season is
+    # incomplete, e.g. fiscal year starting mid-cycle).
     if _is_datetime_time_col(result, time_col):
-        pos_to_date = result.groupby("_position", sort=False)[time_col].first()
+        season_sizes = result.groupby("_season_id", sort=False).size()
+        longest_season = season_sizes.idxmax()
+        longest = result.loc[result["_season_id"] == longest_season]
+        pos_to_date = longest.groupby("_position", sort=False)[time_col].first()
         result["_tick_date"] = result["_position"].map(pos_to_date)
 
     return result
@@ -781,6 +796,14 @@ def plot_seasonal(
             boundaries (e.g. ``"fiscal_year"``). When provided,
             *period* is inferred from the largest season group.
             Mutually exclusive with *period*.
+
+            Positions are assigned by row order within each season
+            (1, 2, 3, ...), so all seasons must start at the same
+            logical point.  If the first season is incomplete (e.g.
+            a fiscal year starting at week 2), pad it with a row
+            whose *value_col* is ``NaN`` so that positions align
+            across seasons.  The missing value will appear as a gap
+            in the plot.
 
     Returns:
         The native figure object if *return_fig* is True or *ax* is
