@@ -2309,3 +2309,140 @@ def test_no_partial_warning_when_season_col_provided(fiscal_df):
         )
     partial_warnings = [x for x in w if "Season boundaries" in str(x.message)]
     assert len(partial_warnings) == 0
+
+
+# =====================================================================
+# Date x-tick labels (Phase 3)
+# =====================================================================
+
+
+def test_compute_seasonal_data_adds_tick_date_for_datetime():
+    """_tick_date column is added when time_col is datetime."""
+    dates = pd.date_range("2020-01-01", periods=36, freq="MS")
+    df = pd.DataFrame(
+        {"time": dates, "value": np.random.default_rng(42).normal(size=36)}
+    )
+    result = _compute_seasonal_data(df, "time", "value", "year", None)
+    assert "_tick_date" in result.columns
+    assert result["_tick_date"].notna().all()
+
+
+def test_compute_seasonal_data_no_tick_date_for_integer():
+    """_tick_date column is NOT added when time_col is integer."""
+    df = pd.DataFrame(
+        {"time": range(20), "value": np.random.default_rng(42).normal(size=20)}
+    )
+    result = _compute_seasonal_data(df, "time", "value", 5, None)
+    assert "_tick_date" not in result.columns
+
+
+def test_matplotlib_date_ticks_for_datetime(seasonal_df_datetime):
+    """Matplotlib x-axis uses dates when ds is datetime."""
+    import matplotlib.pyplot as plt
+
+    fig = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="matplotlib",
+        return_fig=True,
+    )
+    ax = fig.axes[0]
+    # x-axis tick values should be matplotlib date numbers (floats),
+    # not small integers like _position (1, 2, 3, ...)
+    tick_vals = ax.get_xticks()
+    assert all(v > 10000 for v in tick_vals if v > 0)
+    plt.close(fig)
+
+
+def test_matplotlib_positional_ticks_for_integer(seasonal_df_integer):
+    """Matplotlib x-axis uses positions when ds is integer."""
+    import matplotlib.pyplot as plt
+
+    fig = plot_seasonal(
+        seasonal_df_integer,
+        "time",
+        "value",
+        5,
+        backend="matplotlib",
+        return_fig=True,
+    )
+    ax = fig.axes[0]
+    line_xdata = ax.lines[0].get_xdata()
+    assert max(line_xdata) <= 5
+    plt.close(fig)
+
+
+def test_plotly_date_ticks_for_datetime(seasonal_df_datetime):
+    """Plotly x-axis uses dates when ds is datetime."""
+    fig = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="plotly",
+        return_fig=True,
+    )
+    x_vals = fig.data[0].x
+    # Should be datetime64, not small integers
+    assert np.issubdtype(np.asarray(x_vals).dtype, np.datetime64)
+
+
+def test_plotly_positional_ticks_for_integer(seasonal_df_integer):
+    """Plotly x-axis uses positions when ds is integer."""
+    fig = plot_seasonal(
+        seasonal_df_integer,
+        "time",
+        "value",
+        5,
+        backend="plotly",
+        return_fig=True,
+    )
+    x_vals = fig.data[0].x
+    assert np.issubdtype(np.asarray(x_vals).dtype, np.integer)
+
+
+def test_matplotlib_date_ticks_with_season_col():
+    """Date ticks work when season_col is provided with datetime ds."""
+    import matplotlib.pyplot as plt
+
+    dates = pd.date_range("2020-01-01", periods=24, freq="MS")
+    df = pd.DataFrame(
+        {
+            "time": dates,
+            "value": np.random.default_rng(42).normal(size=24),
+            "year": [str(d.year) for d in dates],
+        }
+    )
+    fig = plot_seasonal(
+        df,
+        "time",
+        "value",
+        season_col="year",
+        backend="matplotlib",
+        return_fig=True,
+    )
+    ax = fig.axes[0]
+    tick_vals = ax.get_xticks()
+    assert all(v > 10000 for v in tick_vals if v > 0)
+    plt.close(fig)
+
+
+def test_matplotlib_date_ticks_with_ax(seasonal_df_datetime):
+    """Date ticks work with the ax parameter."""
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    returned = plot_seasonal(
+        seasonal_df_datetime,
+        "time",
+        "value",
+        "year",
+        backend="matplotlib",
+        ax=ax,
+    )
+    assert returned is fig
+    tick_vals = ax.get_xticks()
+    assert all(v > 10000 for v in tick_vals if v > 0)
+    plt.close(fig)

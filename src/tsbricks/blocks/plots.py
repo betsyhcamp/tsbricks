@@ -501,6 +501,12 @@ def _compute_seasonal_data(
 
         _check_data_sufficiency(result, period)
 
+    # When time_col is datetime, map each _position to a representative
+    # date (first occurrence) so renderers can use date-based x-axes.
+    if _is_datetime_time_col(result, time_col):
+        pos_to_date = result.groupby("_position", sort=False)[time_col].first()
+        result["_tick_date"] = result["_position"].map(pos_to_date)
+
     return result
 
 
@@ -598,13 +604,15 @@ def _plot_seasonal_plotly(
     import plotly.graph_objects as go
 
     seasons = list(dict.fromkeys(data["_season_id"]))  # unique, preserving order
+    use_dates = "_tick_date" in data.columns
+    x_col = "_tick_date" if use_dates else "_position"
 
     fig = go.Figure()
     for season, color in zip(seasons, colors):
         mask = data["_season_id"] == season
         fig.add_trace(
             go.Scatter(
-                x=data.loc[mask, "_position"],
+                x=data.loc[mask, x_col],
                 y=data.loc[mask, value_col],
                 mode="lines+markers",
                 name=season,
@@ -679,11 +687,13 @@ def _plot_seasonal_matplotlib(
         owns_figure = False
 
     seasons = list(dict.fromkeys(data["_season_id"]))
+    use_dates = "_tick_date" in data.columns
 
     for season, color in zip(seasons, colors):
         mask = data["_season_id"] == season
+        x_col = "_tick_date" if use_dates else "_position"
         ax.plot(
-            data.loc[mask, "_position"].values,
+            data.loc[mask, x_col].values,
             data.loc[mask, value_col].values,
             marker="o",
             markersize=3.5,
@@ -695,6 +705,9 @@ def _plot_seasonal_matplotlib(
 
     ax.set_xlabel(f"time ({time_col})")
     ax.set_ylabel(value_col)
+
+    if use_dates:
+        fig.autofmt_xdate()
 
     ax.grid(True, color=(0.86, 0.86, 0.86, 0.25), linewidth=0.5)
     ax.set_axisbelow(True)
