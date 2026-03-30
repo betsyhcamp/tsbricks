@@ -2041,27 +2041,31 @@ def fiscal_df():
     return pd.DataFrame(rows)
 
 
-class TestAssignCustomSeasons:
-    """Tests for _assign_custom_seasons helper."""
+# =====================================================================
+# _assign_custom_seasons
+# =====================================================================
 
-    def test_assigns_season_id_from_column(self, fiscal_df):
-        result = _assign_custom_seasons(fiscal_df, "fiscal_year")
-        assert "_season_id" in result.columns
-        assert set(result["_season_id"]) == {"FY2023", "FY2024", "FY2025"}
 
-    def test_assigns_position_via_cumcount(self, fiscal_df):
-        result = _assign_custom_seasons(fiscal_df, "fiscal_year")
-        # FY2023 has 51 rows → positions 1–51
-        fy23 = result[result["_season_id"] == "FY2023"]
-        assert fy23["_position"].tolist() == list(range(1, 52))
-        # FY2024 has 52 rows → positions 1–52
-        fy24 = result[result["_season_id"] == "FY2024"]
-        assert fy24["_position"].tolist() == list(range(1, 53))
+def test_assign_custom_seasons_season_id(fiscal_df):
+    result = _assign_custom_seasons(fiscal_df, "fiscal_year")
+    assert "_season_id" in result.columns
+    assert set(result["_season_id"]) == {"FY2023", "FY2024", "FY2025"}
 
-    def test_preserves_original_columns(self, fiscal_df):
-        result = _assign_custom_seasons(fiscal_df, "fiscal_year")
-        for col in fiscal_df.columns:
-            assert col in result.columns
+
+def test_assign_custom_seasons_position_via_cumcount(fiscal_df):
+    result = _assign_custom_seasons(fiscal_df, "fiscal_year")
+    # FY2023 has 51 rows → positions 1–51
+    fy23 = result[result["_season_id"] == "FY2023"]
+    assert fy23["_position"].tolist() == list(range(1, 52))
+    # FY2024 has 52 rows → positions 1–52
+    fy24 = result[result["_season_id"] == "FY2024"]
+    assert fy24["_position"].tolist() == list(range(1, 53))
+
+
+def test_assign_custom_seasons_preserves_columns(fiscal_df):
+    result = _assign_custom_seasons(fiscal_df, "fiscal_year")
+    for col in fiscal_df.columns:
+        assert col in result.columns
 
 
 # =====================================================================
@@ -2069,51 +2073,51 @@ class TestAssignCustomSeasons:
 # =====================================================================
 
 
-class TestSeasonColValidation:
-    """Tests for season_col validation in _validate_seasonal_inputs."""
+def test_validate_season_col_and_period_raises(fiscal_df):
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        _validate_seasonal_inputs(
+            fiscal_df,
+            "time",
+            "value",
+            period=52,
+            season_col="fiscal_year",
+            **_DEFAULTS,
+        )
 
-    def test_season_col_and_period_raises(self, fiscal_df):
-        with pytest.raises(ValueError, match="mutually exclusive"):
-            _validate_seasonal_inputs(
-                fiscal_df,
-                "time",
-                "value",
-                period=52,
-                season_col="fiscal_year",
-                **_DEFAULTS,
-            )
 
-    def test_neither_season_col_nor_period_raises(self, seasonal_df_datetime):
-        with pytest.raises(ValueError, match="Either period or season_col"):
-            _validate_seasonal_inputs(
-                seasonal_df_datetime,
-                "time",
-                "value",
-                period=None,
-                season_col=None,
-                **_DEFAULTS,
-            )
+def test_validate_neither_season_col_nor_period_raises(seasonal_df_datetime):
+    with pytest.raises(ValueError, match="Either period or season_col"):
+        _validate_seasonal_inputs(
+            seasonal_df_datetime,
+            "time",
+            "value",
+            period=None,
+            season_col=None,
+            **_DEFAULTS,
+        )
 
-    def test_missing_season_col_raises(self, fiscal_df):
-        with pytest.raises(ValueError, match="not_a_column"):
-            _validate_seasonal_inputs(
-                fiscal_df,
-                "time",
-                "value",
-                period=None,
-                season_col="not_a_column",
-                **_DEFAULTS,
-            )
 
-    def test_season_col_only_passes(self, fiscal_df):
+def test_validate_missing_season_col_raises(fiscal_df):
+    with pytest.raises(ValueError, match="not_a_column"):
         _validate_seasonal_inputs(
             fiscal_df,
             "time",
             "value",
             period=None,
-            season_col="fiscal_year",
+            season_col="not_a_column",
             **_DEFAULTS,
         )
+
+
+def test_validate_season_col_only_passes(fiscal_df):
+    _validate_seasonal_inputs(
+        fiscal_df,
+        "time",
+        "value",
+        period=None,
+        season_col="fiscal_year",
+        **_DEFAULTS,
+    )
 
 
 # =====================================================================
@@ -2121,46 +2125,44 @@ class TestSeasonColValidation:
 # =====================================================================
 
 
-class TestComputeSeasonalDataWithSeasonCol:
-    """Tests for _compute_seasonal_data with season_col."""
+def test_compute_seasonal_data_uses_custom_seasons(fiscal_df):
+    result = _compute_seasonal_data(
+        fiscal_df,
+        "time",
+        "value",
+        period=None,
+        base_freq=None,
+        season_col="fiscal_year",
+    )
+    assert set(result["_season_id"]) == {"FY2023", "FY2024", "FY2025"}
 
-    def test_uses_custom_seasons(self, fiscal_df):
-        result = _compute_seasonal_data(
-            fiscal_df,
-            "time",
-            "value",
-            period=None,
-            base_freq=None,
-            season_col="fiscal_year",
-        )
-        assert set(result["_season_id"]) == {"FY2023", "FY2024", "FY2025"}
 
-    def test_position_aligns_correctly(self, fiscal_df):
-        """Position 1 in each season is the first row of that season."""
-        result = _compute_seasonal_data(
-            fiscal_df,
-            "time",
-            "value",
-            period=None,
-            base_freq=None,
-            season_col="fiscal_year",
-        )
-        for fy in ["FY2023", "FY2024", "FY2025"]:
-            season = result[result["_season_id"] == fy]
-            assert season["_position"].iloc[0] == 1
+def test_compute_seasonal_data_custom_position_aligns(fiscal_df):
+    """Position 1 in each season is the first row of that season."""
+    result = _compute_seasonal_data(
+        fiscal_df,
+        "time",
+        "value",
+        period=None,
+        base_freq=None,
+        season_col="fiscal_year",
+    )
+    for fy in ["FY2023", "FY2024", "FY2025"]:
+        season = result[result["_season_id"] == fy]
+        assert season["_position"].iloc[0] == 1
 
-    def test_infers_period_from_max_group(self, fiscal_df):
-        """Sufficiency check uses inferred period (52) from largest group."""
-        # Should not raise — 3 seasons with max size 52
-        result = _compute_seasonal_data(
-            fiscal_df,
-            "time",
-            "value",
-            period=None,
-            base_freq=None,
-            season_col="fiscal_year",
-        )
-        assert result["_season_id"].nunique() == 3
+
+def test_compute_seasonal_data_infers_period_from_max_group(fiscal_df):
+    """Sufficiency check uses inferred period (52) from largest group."""
+    result = _compute_seasonal_data(
+        fiscal_df,
+        "time",
+        "value",
+        period=None,
+        base_freq=None,
+        season_col="fiscal_year",
+    )
+    assert result["_season_id"].nunique() == 3
 
 
 # =====================================================================
@@ -2168,86 +2170,142 @@ class TestComputeSeasonalDataWithSeasonCol:
 # =====================================================================
 
 
-class TestPlotSeasonalWithSeasonCol:
-    """Tests for plot_seasonal with season_col."""
+def test_plot_seasonal_season_col_matplotlib(fiscal_df):
+    import matplotlib.pyplot as plt
 
-    def test_matplotlib_renders(self, fiscal_df):
-        import matplotlib.pyplot as plt
+    fig = plot_seasonal(
+        fiscal_df,
+        "time",
+        "value",
+        season_col="fiscal_year",
+        backend="matplotlib",
+        return_fig=True,
+    )
+    assert fig is not None
+    ax = fig.axes[0]
+    assert len(ax.lines) == 3
+    plt.close(fig)
 
-        fig = plot_seasonal(
+
+def test_plot_seasonal_season_col_plotly(fiscal_df):
+    fig = plot_seasonal(
+        fiscal_df,
+        "time",
+        "value",
+        season_col="fiscal_year",
+        backend="plotly",
+        return_fig=True,
+    )
+    assert len(fig.data) == 3
+
+
+def test_plot_seasonal_season_col_polars(fiscal_df):
+    import polars as pl
+
+    pl_df = pl.from_pandas(fiscal_df)
+    fig = plot_seasonal(
+        pl_df,
+        "time",
+        "value",
+        season_col="fiscal_year",
+        backend="matplotlib",
+        return_fig=True,
+    )
+    assert fig is not None
+    import matplotlib.pyplot as plt
+
+    plt.close(fig)
+
+
+def test_plot_seasonal_season_col_partial_first_aligns(fiscal_df):
+    """With season_col, a short first season doesn't misalign later ones."""
+    import matplotlib.pyplot as plt
+
+    fig = plot_seasonal(
+        fiscal_df,
+        "time",
+        "value",
+        season_col="fiscal_year",
+        backend="matplotlib",
+        return_fig=True,
+    )
+    ax = fig.axes[0]
+    lines = ax.lines
+    # FY2023 has 51 points, FY2024 and FY2025 have 52
+    x_lengths = [len(line.get_xdata()) for line in lines]
+    assert sorted(x_lengths) == [51, 52, 52]
+    plt.close(fig)
+
+
+def test_plot_seasonal_season_col_with_ax(fiscal_df):
+    """season_col works with the ax parameter."""
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    returned = plot_seasonal(
+        fiscal_df,
+        "time",
+        "value",
+        season_col="fiscal_year",
+        backend="matplotlib",
+        ax=ax,
+    )
+    assert returned is fig
+    assert len(ax.lines) == 3
+    plt.close(fig)
+
+
+# =====================================================================
+# Partial first season warning (positional grouping)
+# =====================================================================
+
+
+def test_no_partial_warning_on_complete_seasons():
+    """No warning when all seasons are complete."""
+    df = pd.DataFrame(
+        {
+            "time": range(104),
+            "value": np.random.default_rng(42).normal(size=104),
+        }
+    )
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        _compute_seasonal_data(df, "time", "value", period=52, base_freq=None)
+    partial_warnings = [x for x in w if "Season boundaries" in str(x.message)]
+    assert len(partial_warnings) == 0
+
+
+def test_warns_when_last_season_short():
+    """Warning fires when rows aren't evenly divisible by period.
+
+    With 155 rows and period=52, the last season has 51 rows.
+    """
+    df = pd.DataFrame(
+        {
+            "time": range(155),
+            "value": np.random.default_rng(42).normal(size=155),
+        }
+    )
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        _compute_seasonal_data(df, "time", "value", period=52, base_freq=None)
+    partial_warnings = [x for x in w if "Season boundaries" in str(x.message)]
+    assert len(partial_warnings) == 1
+    assert "51 observations" in str(partial_warnings[0].message)
+    assert "season_col" in str(partial_warnings[0].message)
+
+
+def test_no_partial_warning_when_season_col_provided(fiscal_df):
+    """No partial season warning when season_col handles grouping."""
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        _compute_seasonal_data(
             fiscal_df,
             "time",
             "value",
+            period=None,
+            base_freq=None,
             season_col="fiscal_year",
-            backend="matplotlib",
-            return_fig=True,
         )
-        assert fig is not None
-        ax = fig.axes[0]
-        # 3 seasons → 3 lines
-        assert len(ax.lines) == 3
-        plt.close(fig)
-
-    def test_plotly_renders(self, fiscal_df):
-        fig = plot_seasonal(
-            fiscal_df,
-            "time",
-            "value",
-            season_col="fiscal_year",
-            backend="plotly",
-            return_fig=True,
-        )
-        assert len(fig.data) == 3
-
-    def test_polars_input_accepted(self, fiscal_df):
-        import polars as pl
-
-        pl_df = pl.from_pandas(fiscal_df)
-        fig = plot_seasonal(
-            pl_df,
-            "time",
-            "value",
-            season_col="fiscal_year",
-            backend="matplotlib",
-            return_fig=True,
-        )
-        assert fig is not None
-        import matplotlib.pyplot as plt
-
-        plt.close(fig)
-
-    def test_partial_first_season_aligns_with_season_col(self, fiscal_df):
-        """With season_col, a short first season doesn't misalign later ones."""
-        import matplotlib.pyplot as plt
-
-        fig = plot_seasonal(
-            fiscal_df,
-            "time",
-            "value",
-            season_col="fiscal_year",
-            backend="matplotlib",
-            return_fig=True,
-        )
-        ax = fig.axes[0]
-        lines = ax.lines
-        # FY2023 has 51 points, FY2024 and FY2025 have 52
-        x_lengths = [len(line.get_xdata()) for line in lines]
-        assert sorted(x_lengths) == [51, 52, 52]
-        plt.close(fig)
-
-    def test_season_col_with_ax(self, fiscal_df):
-        """season_col works with the ax parameter."""
-        import matplotlib.pyplot as plt
-
-        fig, ax = plt.subplots()
-        returned = plot_seasonal(
-            fiscal_df,
-            "time",
-            "value",
-            season_col="fiscal_year",
-            backend="matplotlib",
-            ax=ax,
-        )
-        assert returned is fig
-        assert len(ax.lines) == 3
-        plt.close(fig)
+    partial_warnings = [x for x in w if "Season boundaries" in str(x.message)]
+    assert len(partial_warnings) == 0
