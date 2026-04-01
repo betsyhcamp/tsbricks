@@ -11,6 +11,7 @@ from tsbricks.blocks.metrics import (
     _sanitize_value,
     _SMALL_NUM_BOUND,
     difference_scale,
+    mae,
     rmse,
     wape,
     rmsse,
@@ -150,6 +151,56 @@ def test_difference_scale_invalid_scale_stat_raises(y_train_unit_diffs):
     """Raises ValueError for unrecognized scale_stat."""
     with pytest.raises(ValueError, match="scale_stat must be"):
         difference_scale(y_train_unit_diffs, m=1, scale_stat="bad")
+
+
+# =====================================================================
+# mae
+# =====================================================================
+
+
+def test_mae_known_value(y_true_simple, y_pred_simple):
+    """MAE is 1.0 for errors [-1, -1]."""
+    np.testing.assert_allclose(mae(y_true_simple, y_pred_simple), 1.0)
+
+
+def test_mae_perfect_prediction(y_true_zero_error, y_pred_zero_error):
+    """MAE is 0.0 when forecast matches actuals exactly."""
+    np.testing.assert_allclose(
+        mae(y_true_zero_error, y_pred_zero_error), 0.0, atol=1e-15
+    )
+
+
+def test_mae_nonfinite_returns_nan(y_true_nonfinite, y_pred_nonfinite_pair):
+    """NaN in y_true → returns NaN."""
+    assert np.isnan(mae(y_true_nonfinite, y_pred_nonfinite_pair))
+
+
+def test_mae_empty_arrays_returns_nan(arr):
+    """Empty input arrays → returns NaN."""
+    assert np.isnan(mae(arr([]), arr([])))
+
+
+def test_mae_shape_mismatch_raises(arr):
+    """Raises ValueError when array lengths differ."""
+    with pytest.raises(ValueError, match="1D arrays of same shape"):
+        mae(arr([1, 2]), arr([1, 2, 3]))
+
+
+def test_mae_2d_input_raises(y_true_shape_2d, y_pred_shape_2d):
+    """Raises ValueError for 2D input arrays."""
+    with pytest.raises(ValueError, match="1D arrays of same shape"):
+        mae(y_true_shape_2d, y_pred_shape_2d)
+
+
+def test_mae_kwargs_raises():
+    """Raises NotImplementedError when **kwargs are supplied."""
+    with pytest.raises(NotImplementedError, match="does not yet support"):
+        mae([1, 2], [1, 2], axis=0)
+
+
+def test_mae_accepts_plain_lists():
+    """Coerces plain Python lists via np.asarray."""
+    np.testing.assert_allclose(mae([0, 0], [1, 1]), 1.0)
 
 
 # =====================================================================
