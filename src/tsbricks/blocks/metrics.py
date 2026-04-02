@@ -400,3 +400,55 @@ def wape(
         return float("nan")
 
     return _sanitize_value(numerator / denominator)
+
+
+def weighted_signed_bias(
+    y_true: Iterable[float],
+    y_pred: Iterable[float],
+    **kwargs: object,
+) -> float:
+    """Return the Weighted Signed Bias (WSB).
+
+    WSB = sum(y_pred - y_true) / sum(|y_true|). Like WAPE but the numerator
+    retains sign, so WSB captures directional bias. Positive values indicate
+    over-forecasting; negative values indicate under-forecasting.
+
+    Args:
+        y_true: Actual (observed) values, 1-D.
+        y_pred: Predicted (forecast) values, 1-D, same length as ``y_true``.
+        **kwargs: Reserved for future extensibility. Passing any keyword
+            arguments currently raises ``NotImplementedError``.
+
+    Returns:
+        The WSB as a float, or ``NaN`` if inputs are empty, non-finite,
+        or ``sum(|y_true|)`` is zero/near-zero.
+
+    Raises:
+        ValueError: If ``y_true`` and ``y_pred`` are not 1-D arrays of the
+            same shape.
+        NotImplementedError: If any ``**kwargs`` are supplied.
+
+    Example:
+        >>> from tsbricks.blocks.metrics import weighted_signed_bias
+        >>> weighted_signed_bias([100, 200], [110, 190])
+        0.0
+    """
+    if kwargs:
+        raise NotImplementedError(
+            f"weighted_signed_bias() does not yet support keyword "
+            f"arguments: {set(kwargs)}"
+        )
+
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+
+    if _bad_numerator_inputs(y_true, y_pred):
+        return float("nan")
+
+    numerator = float(np.sum(y_pred - y_true))
+    denominator = float(np.sum(np.abs(y_true)))
+
+    if _scale_is_invalid(denominator):
+        return float("nan")
+
+    return _sanitize_value(numerator / denominator)
