@@ -311,23 +311,16 @@ class MetricsConfig(BaseModel):
 class TestConfig(BaseModel):
     """Test fold configuration.
 
-    The test fold uses ``cross_validation.horizon``; a separate
-    ``test.horizon`` is not supported.
+    ``horizon`` is optional.  When provided it overrides the
+    top-level ``cross_validation.horizon`` for the test fold.
+    When omitted, the test fold inherits ``cross_validation.horizon``
+    (which must exist — validated by ``BacktestConfig``).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     test_origin: str | int
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_horizon(cls, data: Any) -> Any:
-        if isinstance(data, dict) and "horizon" in data:
-            raise ValueError(
-                "test.horizon is not supported; the test fold uses "
-                "cross_validation.horizon."
-            )
-        return data
+    horizon: int | None = Field(default=None, gt=0)
 
 
 class BacktestConfig(BaseModel):
@@ -350,6 +343,15 @@ class BacktestConfig(BaseModel):
     def _validate_test_config(self) -> BacktestConfig:
         if self.test is None:
             return self
+
+        # Test horizon must be resolvable: either test.horizon
+        # is set, or cross_validation.horizon provides a default.
+        if self.test.horizon is None and self.cross_validation.horizon is None:
+            raise ValueError(
+                "test.horizon is required when using "
+                "per-origin horizons (no top-level "
+                "cross_validation.horizon to fall back to)."
+            )
 
         test_origin = self.test.test_origin
         origins = self.cross_validation.raw_origins()
