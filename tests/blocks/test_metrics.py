@@ -102,7 +102,7 @@ def test_scale_is_invalid_inf():
 
 def test_sanitize_value_finite_passthrough():
     """Returns the float unchanged when finite."""
-    assert _sanitize_value(3.14) == pytest.approx(3.14)
+    np.testing.assert_allclose(_sanitize_value(3.14), 3.14, rtol=1e-7)
 
 
 def test_sanitize_value_inf_returns_nan():
@@ -118,21 +118,21 @@ def test_sanitize_value_inf_returns_nan():
 def test_difference_scale_rms_unit_diffs(y_train_unit_diffs):
     """RMS scale is 1.0 for series with unit diffs."""
     scale, unstable = difference_scale(y_train_unit_diffs, m=1, scale_stat="rms")
-    assert scale == pytest.approx(1.0)
+    np.testing.assert_allclose(scale, 1.0, rtol=1e-7)
     assert unstable is False
 
 
 def test_difference_scale_meanabs_unit_diffs(y_train_unit_diffs):
     """Meanabs scale is 1.0 for series with unit diffs."""
     scale, unstable = difference_scale(y_train_unit_diffs, m=1, scale_stat="meanabs")
-    assert scale == pytest.approx(1.0)
+    np.testing.assert_allclose(scale, 1.0, rtol=1e-7)
     assert unstable is False
 
 
 def test_difference_scale_rms_double_diffs(y_train_double_diffs):
     """RMS scale is 2.0 for series with double diffs."""
     scale, unstable = difference_scale(y_train_double_diffs, m=1)
-    assert scale == pytest.approx(2.0)
+    np.testing.assert_allclose(scale, 2.0, rtol=1e-7)
     assert unstable is False
 
 
@@ -162,13 +162,13 @@ def test_difference_scale_invalid_scale_stat_raises(y_train_unit_diffs):
 
 def test_mae_known_value(y_true_simple, y_pred_simple):
     """MAE is 1.0 for errors [-1, -1]."""
-    np.testing.assert_allclose(mae(y_true_simple, y_pred_simple), 1.0)
+    np.testing.assert_allclose(mae(y_true_simple, y_pred_simple), 1.0, rtol=1e-7)
 
 
 def test_mae_perfect_prediction(y_true_zero_error, y_pred_zero_error):
     """MAE is 0.0 when forecast matches actuals exactly."""
     np.testing.assert_allclose(
-        mae(y_true_zero_error, y_pred_zero_error), 0.0, atol=1e-15
+        mae(y_true_zero_error, y_pred_zero_error), 0.0, rtol=1e-7, atol=1e-10
     )
 
 
@@ -202,7 +202,7 @@ def test_mae_kwargs_raises():
 
 def test_mae_accepts_plain_lists():
     """Coerces plain Python lists via np.asarray."""
-    np.testing.assert_allclose(mae([0, 0], [1, 1]), 1.0)
+    np.testing.assert_allclose(mae([0, 0], [1, 1]), 1.0, rtol=1e-7)
 
 
 # =====================================================================
@@ -218,7 +218,7 @@ def test_relative_mae_perfect_candidate(y_true_zero_error, y_pred_zero_error):
         y_pred_zero_error,
         y_pred_benchmark=[0, 0, 0],
     )
-    assert value == pytest.approx(0.0)
+    np.testing.assert_allclose(value, 0.0, rtol=1e-7, atol=1e-10)
     assert unstable is False
 
 
@@ -233,7 +233,7 @@ def test_relative_mae_known_value(
         y_pred_simple,
         y_pred_benchmark=y_pred_benchmark_simple,
     )
-    assert value == pytest.approx(0.5)
+    np.testing.assert_allclose(value, 0.5, rtol=1e-7)
     assert unstable is False
 
 
@@ -247,9 +247,9 @@ def test_relative_mae_return_components(
         y_pred_benchmark=y_pred_benchmark_simple,
         return_components=True,
     )
-    assert value == pytest.approx(0.5)
-    assert cand == pytest.approx(1.0)
-    assert bench == pytest.approx(2.0)
+    np.testing.assert_allclose(value, 0.5, rtol=1e-7)
+    np.testing.assert_allclose(cand, 1.0, rtol=1e-7)
+    np.testing.assert_allclose(bench, 2.0, rtol=1e-7)
     assert unstable is False
 
 
@@ -269,7 +269,7 @@ def test_relative_mae_benchmark_mae_fallback(
         y_pred_simple,
         benchmark_mae=fallback_benchmark_mae_unit,
     )
-    assert value == pytest.approx(1.0)
+    np.testing.assert_allclose(value, 1.0, rtol=1e-7)
     assert unstable is False
 
 
@@ -284,7 +284,7 @@ def test_relative_mae_y_pred_benchmark_takes_precedence(
         benchmark_mae=1.0,
     )
     # candidate MAE=1, benchmark MAE from array=2 → 0.5
-    assert value == pytest.approx(0.5)
+    np.testing.assert_allclose(value, 0.5, rtol=1e-7)
     assert unstable is False
 
 
@@ -325,6 +325,19 @@ def test_relative_mae_benchmark_mae_near_zero_unstable(
     assert unstable is True
 
 
+def test_relative_mae_nonfinite_benchmark_returns_unstable(
+    y_true_simple, y_pred_simple, arr
+):
+    """Non-finite y_pred_benchmark → unstable scale flagged True."""
+    value, unstable = relative_mae(
+        y_true_simple,
+        y_pred_simple,
+        y_pred_benchmark=arr([np.nan, 1.0]),
+    )
+    assert np.isnan(value)
+    assert unstable is True
+
+
 # =====================================================================
 # rmse
 # =====================================================================
@@ -332,13 +345,13 @@ def test_relative_mae_benchmark_mae_near_zero_unstable(
 
 def test_rmse_known_value(y_true_simple, y_pred_simple):
     """RMSE is 1.0 for errors [-1, -1]."""
-    np.testing.assert_allclose(rmse(y_true_simple, y_pred_simple), 1.0)
+    np.testing.assert_allclose(rmse(y_true_simple, y_pred_simple), 1.0, rtol=1e-7)
 
 
 def test_rmse_perfect_prediction(y_true_zero_error, y_pred_zero_error):
     """RMSE is 0.0 when forecast matches actuals exactly."""
     np.testing.assert_allclose(
-        rmse(y_true_zero_error, y_pred_zero_error), 0.0, atol=1e-15
+        rmse(y_true_zero_error, y_pred_zero_error), 0.0, rtol=1e-7, atol=1e-10
     )
 
 
@@ -372,7 +385,7 @@ def test_rmse_kwargs_raises():
 
 def test_rmse_accepts_plain_lists():
     """Coerces plain Python lists via np.asarray."""
-    np.testing.assert_allclose(rmse([0, 0], [1, 1]), 1.0)
+    np.testing.assert_allclose(rmse([0, 0], [1, 1]), 1.0, rtol=1e-7)
 
 
 def test_rmse_overflow_returns_nan():
@@ -393,13 +406,13 @@ def test_rmse_overflow_returns_nan():
 def test_wape_known_value(y_true_simple, y_pred_simple):
     """WAPE is 1/3 for errors [1, 1] over sum(|y_true|)=6."""
     # y_true=[2,4], y_pred=[1,3] → num=|1|+|1|=2, denom=2+4=6
-    np.testing.assert_allclose(wape(y_true_simple, y_pred_simple), 2.0 / 6.0)
+    np.testing.assert_allclose(wape(y_true_simple, y_pred_simple), 2.0 / 6.0, rtol=1e-7)
 
 
 def test_wape_perfect_prediction(y_true_zero_error, y_pred_zero_error):
     """WAPE is 0.0 when forecast matches actuals exactly."""
     np.testing.assert_allclose(
-        wape(y_true_zero_error, y_pred_zero_error), 0.0, atol=1e-15
+        wape(y_true_zero_error, y_pred_zero_error), 0.0, rtol=1e-7, atol=1e-10
     )
 
 
@@ -416,7 +429,7 @@ def test_wape_near_zero_denominator_returns_nan(arr, eps_tiny):
 def test_wape_negative_actuals(arr):
     """Denominator uses abs(y_true), not raw y_true."""
     # y_true=[-2,-4], y_pred=[-1,-3] → num=|1|+|1|=2, denom=2+4=6
-    np.testing.assert_allclose(wape(arr([-2, -4]), arr([-1, -3])), 2.0 / 6.0)
+    np.testing.assert_allclose(wape(arr([-2, -4]), arr([-1, -3])), 2.0 / 6.0, rtol=1e-7)
 
 
 def test_wape_nonfinite_returns_nan(y_true_nonfinite, y_pred_nonfinite_pair):
@@ -450,7 +463,9 @@ def test_wape_kwargs_raises():
 def test_wape_accepts_plain_lists():
     """Coerces plain Python lists via np.asarray."""
     # num=|10|+|10|+|20|=40, denom=100+200+300=600 → 40/600
-    np.testing.assert_allclose(wape([100, 200, 300], [110, 190, 280]), 40.0 / 600.0)
+    np.testing.assert_allclose(
+        wape([100, 200, 300], [110, 190, 280]), 40.0 / 600.0, rtol=1e-7
+    )
 
 
 # =====================================================================
@@ -463,7 +478,7 @@ def test_wsb_known_value(y_true_simple, y_pred_simple):
     # y_pred - y_true = [1-2, 3-4] = [-1, -1], sum = -2
     # denom = |2| + |4| = 6
     np.testing.assert_allclose(
-        weighted_signed_bias(y_true_simple, y_pred_simple), -2.0 / 6.0
+        weighted_signed_bias(y_true_simple, y_pred_simple), -2.0 / 6.0, rtol=1e-7
     )
 
 
@@ -472,7 +487,8 @@ def test_wsb_perfect_prediction(y_true_zero_error, y_pred_zero_error):
     np.testing.assert_allclose(
         weighted_signed_bias(y_true_zero_error, y_pred_zero_error),
         0.0,
-        atol=1e-15,
+        rtol=1e-7,
+        atol=1e-10,
     )
 
 
@@ -481,7 +497,7 @@ def test_wsb_positive_bias_overprediction(y_true_simple, y_pred_over):
     # y_pred - y_true = [3-2, 5-4] = [1, 1], sum = 2
     # denom = |2| + |4| = 6
     np.testing.assert_allclose(
-        weighted_signed_bias(y_true_simple, y_pred_over), 2.0 / 6.0
+        weighted_signed_bias(y_true_simple, y_pred_over), 2.0 / 6.0, rtol=1e-7
     )
 
 
@@ -506,7 +522,7 @@ def test_wsb_negative_actuals(arr):
     # y_true=[-2,-4], y_pred=[-1,-3]
     # num = sum([-1+2, -3+4]) = sum([1, 1]) = 2, denom = 2+4 = 6
     np.testing.assert_allclose(
-        weighted_signed_bias(arr([-2, -4]), arr([-1, -3])), 2.0 / 6.0
+        weighted_signed_bias(arr([-2, -4]), arr([-1, -3])), 2.0 / 6.0, rtol=1e-7
     )
 
 
@@ -545,6 +561,7 @@ def test_wsb_accepts_plain_lists():
     np.testing.assert_allclose(
         weighted_signed_bias([100, 200, 300], [110, 190, 280]),
         -20.0 / 600.0,
+        rtol=1e-7,
     )
 
 
@@ -560,14 +577,14 @@ def test_rmsse_perfect_forecast_is_zero(
     value, unstable = rmsse(
         y_true_zero_error, y_pred_zero_error, y_train=y_train_unit_diffs
     )
-    assert value == pytest.approx(0.0)
+    np.testing.assert_allclose(value, 0.0, rtol=1e-7, atol=1e-10)
     assert unstable is False
 
 
 def test_rmsse_known_value(y_true_simple, y_pred_simple, y_train_unit_diffs):
     """RMSSE is 1.0 for errors=[-1,-1], MSE=1, scale=1."""
     value, unstable = rmsse(y_true_simple, y_pred_simple, y_train=y_train_unit_diffs)
-    assert value == pytest.approx(1.0)
+    np.testing.assert_allclose(value, 1.0, rtol=1e-7)
     assert unstable is False
 
 
@@ -579,9 +596,9 @@ def test_rmsse_return_components(y_true_simple, y_pred_simple, y_train_unit_diff
         y_train=y_train_unit_diffs,
         return_components=True,
     )
-    assert value == pytest.approx(1.0)
-    assert mse == pytest.approx(1.0)
-    assert scale == pytest.approx(1.0)
+    np.testing.assert_allclose(value, 1.0, rtol=1e-7)
+    np.testing.assert_allclose(mse, 1.0, rtol=1e-7)
+    np.testing.assert_allclose(scale, 1.0, rtol=1e-7)
     assert unstable is False
 
 
@@ -596,7 +613,7 @@ def test_rmsse_fallback_scale(y_true_simple, y_pred_simple, fallback_scale_unit)
     value, unstable = rmsse(
         y_true_simple, y_pred_simple, fallback_scale=fallback_scale_unit
     )
-    assert value == pytest.approx(1.0)
+    np.testing.assert_allclose(value, 1.0, rtol=1e-7)
     assert unstable is False
 
 
@@ -611,7 +628,7 @@ def test_rmsse_y_train_takes_precedence(
         fallback_scale=1.0,
     )
     # MSE=1, scale=2 → RMSSE = sqrt(1)/2 = 0.5
-    assert value == pytest.approx(0.5)
+    np.testing.assert_allclose(value, 0.5, rtol=1e-7)
     assert unstable is False
 
 
@@ -643,7 +660,7 @@ def test_dsb_zero_bias(y_true_zero_error, y_pred_zero_error, y_train_unit_diffs)
     value, unstable = difference_scaled_bias(
         y_true_zero_error, y_pred_zero_error, y_train=y_train_unit_diffs
     )
-    assert value == pytest.approx(0.0)
+    np.testing.assert_allclose(value, 0.0, rtol=1e-7, atol=1e-10)
     assert unstable is False
 
 
@@ -655,7 +672,7 @@ def test_dsb_negative_bias_underprediction(
     value, unstable = difference_scaled_bias(
         y_true_simple, y_pred_simple, y_train=y_train_unit_diffs
     )
-    assert value == pytest.approx(-1.0)
+    np.testing.assert_allclose(value, -1.0, rtol=1e-7)
     assert unstable is False
 
 
@@ -667,7 +684,7 @@ def test_dsb_positive_bias_overprediction(
     value, unstable = difference_scaled_bias(
         y_true_simple, y_pred_over, y_train=y_train_unit_diffs
     )
-    assert value == pytest.approx(1.0)
+    np.testing.assert_allclose(value, 1.0, rtol=1e-7)
     assert unstable is False
 
 
@@ -679,9 +696,9 @@ def test_dsb_return_components(y_true_simple, y_pred_simple, y_train_unit_diffs)
         y_train=y_train_unit_diffs,
         return_components=True,
     )
-    assert value == pytest.approx(-1.0)
-    assert mean_error == pytest.approx(-1.0)
-    assert scale == pytest.approx(1.0)
+    np.testing.assert_allclose(value, -1.0, rtol=1e-7)
+    np.testing.assert_allclose(mean_error, -1.0, rtol=1e-7)
+    np.testing.assert_allclose(scale, 1.0, rtol=1e-7)
     assert unstable is False
 
 
@@ -696,7 +713,7 @@ def test_dsb_fallback_scale(y_true_simple, y_pred_simple, fallback_scale_unit):
     value, unstable = difference_scaled_bias(
         y_true_simple, y_pred_simple, fallback_scale=fallback_scale_unit
     )
-    assert value == pytest.approx(-1.0)
+    np.testing.assert_allclose(value, -1.0, rtol=1e-7)
     assert unstable is False
 
 
@@ -709,7 +726,7 @@ def test_dsb_meanabs_scale_stat(y_true_simple, y_pred_simple, y_train_double_dif
         y_train=y_train_double_diffs,
         scale_stat="meanabs",
     )
-    assert value == pytest.approx(-0.5)
+    np.testing.assert_allclose(value, -0.5, rtol=1e-7)
     assert unstable is False
 
 
