@@ -311,6 +311,162 @@ def difference_scaled_bias(
     )
 
 
+def mae(
+    y_true: Iterable[float],
+    y_pred: Iterable[float],
+    **kwargs: object,
+) -> float:
+    """Return the Mean Absolute Error (MAE) between actual and predicted values.
+
+    Args:
+        y_true: Actual (observed) values, 1-D.
+        y_pred: Predicted (forecast) values, 1-D, same length as ``y_true``.
+        **kwargs: Reserved for future extensibility. Passing any keyword
+            arguments currently raises ``NotImplementedError``.
+
+    Returns:
+        The MAE as a float, or ``NaN`` if inputs are empty, non-finite,
+        or produce a non-finite result (overflow protection).
+
+    Raises:
+        ValueError: If ``y_true`` and ``y_pred`` are not 1-D arrays of the
+            same shape.
+        NotImplementedError: If any ``**kwargs`` are supplied.
+
+    Example:
+        >>> from tsbricks.blocks.metrics import mae
+        >>> mae([2, 4, 6], [1, 3, 5])
+        1.0
+    """
+    if kwargs:
+        raise NotImplementedError(
+            f"mae() does not yet support keyword arguments: {set(kwargs)}"
+        )
+
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+
+    if _bad_numerator_inputs(y_true, y_pred):
+        return float("nan")
+
+    return _sanitize_value(float(np.mean(np.abs(y_true - y_pred))))
+
+
+def relative_mae(
+    y_true: Iterable[float],
+    y_pred: Iterable[float],
+    *,
+    y_pred_benchmark: Iterable[float] | None = None,
+    benchmark_mae: float | None = None,
+    return_components: bool = False,
+) -> Tuple[float, bool] | Tuple[float, float, float, bool]:
+    """Return the Relative Mean Absolute Error: the ratio of a candidate
+    model's MAE to a benchmark model's MAE.
+
+    Relative MAE = MAE(candidate) / MAE(benchmark).
+
+    A value < 1 means the candidate outperforms the benchmark; > 1 means the
+    benchmark is better.
+
+    Args:
+        y_true (Iterable[float]): Actual values for the evaluation window,
+            aligned to ``y_pred``.
+        y_pred (Iterable[float]): Candidate forecast values aligned to
+            ``y_true``.
+        y_pred_benchmark (Iterable[float] | None): Benchmark forecast values
+            aligned to ``y_true``. Used to compute benchmark MAE internally.
+            Defaults to None.
+        benchmark_mae (float | None): Pre-computed benchmark MAE to use as
+            the denominator. Defaults to None.
+        return_components (bool): If True, also return the candidate MAE and
+            benchmark MAE, along with the instability flag. Defaults to False.
+
+    Raises:
+        ValueError: Either ``y_pred_benchmark`` or ``benchmark_mae`` must be
+            provided. Both cannot be None. If both provided,
+            ``y_pred_benchmark`` takes precedence.
+
+    Returns:
+        Tuple[float, bool]: If ``return_components`` is False, returns
+            (relative_mae_value, unstable_scale) where:
+              - relative_mae_value (float): The relative MAE, or NaN if
+                inputs are invalid or the benchmark scale is unstable.
+              - unstable_scale (bool): True if the benchmark MAE was zero,
+                non-finite, or otherwise unusable; False otherwise.
+
+        Tuple[float, float, float, bool]: If ``return_components`` is True,
+            returns (relative_mae_value, candidate_mae, benchmark_mae,
+            unstable_scale) where:
+              - relative_mae_value (float): The relative MAE, or NaN on
+                invalid/unstable inputs.
+              - candidate_mae (float): MAE of the candidate forecast, or NaN
+                if the numerator is invalid.
+              - benchmark_mae (float): MAE of the benchmark forecast, or NaN
+                if unstable.
+              - unstable_scale (bool): True if the benchmark MAE is
+                zero/non-finite or otherwise unusable; False otherwise.
+
+    Example:
+        >>> from tsbricks.blocks.metrics import relative_mae
+        >>> relative_mae([2, 4], [1, 3], y_pred_benchmark=[0, 2])
+        (0.5, False)
+    """
+    if y_pred_benchmark is None and benchmark_mae is None:
+        raise ValueError(
+            "Invalid arguments: either provide `y_pred_benchmark` to compute "
+            "the benchmark MAE or set `benchmark_mae` (float). "
+            "Both cannot be None."
+        )
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+    y_pred_benchmark = (
+        np.asarray(y_pred_benchmark, dtype=float)
+        if y_pred_benchmark is not None
+        else None
+    )
+
+    # Fail fast on non-finite or empty numerator data
+    if _bad_numerator_inputs(y_true, y_pred):
+        return (np.nan, np.nan, np.nan, False) if return_components else (np.nan, False)
+
+    candidate_mae_val = float(np.mean(np.abs(y_true - y_pred)))
+    if not np.isfinite(candidate_mae_val):
+        return (np.nan, np.nan, np.nan, False) if return_components else (np.nan, False)
+
+    # Compute or validate benchmark MAE
+    if y_pred_benchmark is not None:
+        if _bad_numerator_inputs(y_true, y_pred_benchmark):
+            return (
+                (np.nan, candidate_mae_val, np.nan, True)
+                if return_components
+                else (np.nan, True)
+            )
+        bench_mae_val = float(np.mean(np.abs(y_true - y_pred_benchmark)))
+    else:
+        if benchmark_mae is None:
+            raise ValueError(
+                "Invalid arguments: either provide `y_pred_benchmark` "
+                "or set `benchmark_mae`."
+            )
+        bench_mae_val = float(benchmark_mae)
+
+    is_bad_scale = _scale_is_invalid(bench_mae_val)
+    if is_bad_scale:
+        return (
+            (np.nan, candidate_mae_val, np.nan, True)
+            if return_components
+            else (np.nan, True)
+        )
+
+    value = _sanitize_value(candidate_mae_val / bench_mae_val)
+
+    return (
+        (value, candidate_mae_val, bench_mae_val, False)
+        if return_components
+        else (value, False)
+    )
+
+
 def wape(
     y_true: Iterable[float],
     y_pred: Iterable[float],
@@ -353,6 +509,58 @@ def wape(
         return float("nan")
 
     numerator = float(np.sum(np.abs(y_true - y_pred)))
+    denominator = float(np.sum(np.abs(y_true)))
+
+    if _scale_is_invalid(denominator):
+        return float("nan")
+
+    return _sanitize_value(numerator / denominator)
+
+
+def weighted_signed_bias(
+    y_true: Iterable[float],
+    y_pred: Iterable[float],
+    **kwargs: object,
+) -> float:
+    """Return the Weighted Signed Bias (WSB).
+
+    WSB = sum(y_pred - y_true) / sum(|y_true|). Like WAPE but the numerator
+    retains sign, so WSB captures directional bias. Positive values indicate
+    over-forecasting; negative values indicate under-forecasting.
+
+    Args:
+        y_true: Actual (observed) values, 1-D.
+        y_pred: Predicted (forecast) values, 1-D, same length as ``y_true``.
+        **kwargs: Reserved for future extensibility. Passing any keyword
+            arguments currently raises ``NotImplementedError``.
+
+    Returns:
+        The WSB as a float, or ``NaN`` if inputs are empty, non-finite,
+        or ``sum(|y_true|)`` is zero/near-zero.
+
+    Raises:
+        ValueError: If ``y_true`` and ``y_pred`` are not 1-D arrays of the
+            same shape.
+        NotImplementedError: If any ``**kwargs`` are supplied.
+
+    Example:
+        >>> from tsbricks.blocks.metrics import weighted_signed_bias
+        >>> weighted_signed_bias([100, 200], [110, 190])
+        0.0
+    """
+    if kwargs:
+        raise NotImplementedError(
+            f"weighted_signed_bias() does not yet support keyword "
+            f"arguments: {set(kwargs)}"
+        )
+
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+
+    if _bad_numerator_inputs(y_true, y_pred):
+        return float("nan")
+
+    numerator = float(np.sum(y_pred - y_true))
     denominator = float(np.sum(np.abs(y_true)))
 
     if _scale_is_invalid(denominator):

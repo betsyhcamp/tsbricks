@@ -11,6 +11,9 @@ and this project adheres to **Semantic Versioning** (https://semver.org/).
 
 ### Added
 
+- **`mae` metric** — Mean Absolute Error (`tsbricks.blocks.metrics.mae`).
+- **`relative_mae` metric** — Ratio of candidate MAE to benchmark MAE, with support for pre-computed benchmark MAE and `return_components` (`tsbricks.blocks.metrics.relative_mae`).
+- **`weighted_signed_bias` metric** — Signed analogue of WAPE for directional bias detection (`tsbricks.blocks.metrics.weighted_signed_bias`).
 - **`ax` parameter for `plot_acf` and `plot_pacf`** — Draw onto a user-provided matplotlib Axes for subplot integration.
 - **`season_col` parameter for `plot_seasonal`** — Explicit season grouping via a column (e.g. fiscal year), mutually exclusive with `period`. Period is inferred from the largest season group.
 - **Partial season warning** — `plot_seasonal` warns when positional grouping (integer `ds`, no `season_col`) produces an uneven last season, suggesting `season_col` as a fix.
