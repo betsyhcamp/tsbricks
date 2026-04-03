@@ -317,3 +317,15 @@ def y_pred_shape_2d():
 def y_pred_over(arr):
     """Overpredicts y_true_simple by +1 each → positive bias."""
     return arr([3, 5])
+
+
+@pytest.fixture
+def y_pred_benchmark_simple(arr):
+    """Benchmark forecast for y_true_simple=[2,4]; errors=[2,2], MAE=2."""
+    return arr([0, 2])
+
+
+@pytest.fixture
+def fallback_benchmark_mae_unit():
+    """Pre-computed benchmark MAE of 1.0."""
+    return 1.0
