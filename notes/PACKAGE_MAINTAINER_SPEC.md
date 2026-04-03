@@ -201,7 +201,7 @@ from tsbricks.blocks.transforms import (
 ### 4.5 Built-in Metrics
 
 ```python
-from tsbricks.blocks.metrics import mae, rmse, mape, rmsse, difference_scaled_bias, wape, wrmsse
+from tsbricks.blocks.metrics import mae, relative_mae, rmse, mape, rmsse, difference_scaled_bias, wape, weighted_signed_bias, wrmsse
 ```
 
 ### 4.6 Diagnostics
