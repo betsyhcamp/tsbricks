@@ -519,14 +519,48 @@ def test_test_origin_int_not_after_max_raises(
         parse_config(config=valid_cfg)
 
 
-def test_test_horizon_rejected(valid_cfg: dict) -> None:
-    """Providing horizon in test block raises with helpful message."""
+def test_test_horizon_accepted_uniform(valid_cfg: dict) -> None:
+    """test.horizon is accepted as optional override in uniform case."""
     valid_cfg["test"] = {
         "test_origin": "2024-01-01",
         "horizon": 12,
     }
 
-    with pytest.raises(ValidationError, match="test.horizon is not supported"):
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.test is not None
+    assert cfg.test.horizon == 12
+
+
+def test_test_horizon_none_uniform(valid_cfg: dict) -> None:
+    """test.horizon defaults to None, inherits from top-level."""
+    valid_cfg["test"] = {"test_origin": "2024-01-01"}
+
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.test is not None
+    assert cfg.test.horizon is None
+
+
+def test_test_horizon_zero_raises(valid_cfg: dict) -> None:
+    """test.horizon=0 raises ValidationError."""
+    valid_cfg["test"] = {
+        "test_origin": "2024-01-01",
+        "horizon": 0,
+    }
+
+    with pytest.raises(ValidationError):
+        parse_config(config=valid_cfg)
+
+
+def test_test_horizon_negative_raises(valid_cfg: dict) -> None:
+    """Negative test.horizon raises ValidationError."""
+    valid_cfg["test"] = {
+        "test_origin": "2024-01-01",
+        "horizon": -1,
+    }
+
+    with pytest.raises(ValidationError):
         parse_config(config=valid_cfg)
 
 
@@ -1238,10 +1272,31 @@ def test_parse_config_variable_horizon(
     ]
 
 
-def test_parse_config_variable_horizon_with_test_fold(
+def test_parse_config_variable_horizon_with_test_horizon(
     valid_cfg: dict,
 ) -> None:
-    """Variable-horizon config with test fold parses."""
+    """Variable-horizon config with explicit test.horizon parses."""
+    del valid_cfg["cross_validation"]["horizon"]
+    valid_cfg["cross_validation"]["forecast_origins"] = [
+        {"origin": "2023-01-01", "horizon": 6},
+        {"origin": "2023-07-01", "horizon": 3},
+    ]
+    valid_cfg["test"] = {
+        "test_origin": "2024-01-01",
+        "horizon": 4,
+    }
+
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.test is not None
+    assert cfg.test.test_origin == "2024-01-01"
+    assert cfg.test.horizon == 4
+
+
+def test_parse_config_variable_horizon_test_no_horizon_raises(
+    valid_cfg: dict,
+) -> None:
+    """Variable horizons + test fold without horizon raises."""
     del valid_cfg["cross_validation"]["horizon"]
     valid_cfg["cross_validation"]["forecast_origins"] = [
         {"origin": "2023-01-01", "horizon": 6},
@@ -1249,7 +1304,60 @@ def test_parse_config_variable_horizon_with_test_fold(
     ]
     valid_cfg["test"] = {"test_origin": "2024-01-01"}
 
+    with pytest.raises(ValidationError, match="test.horizon is required"):
+        parse_config(config=valid_cfg)
+
+
+def test_parse_config_uniform_test_horizon_override(
+    valid_cfg: dict,
+) -> None:
+    """Uniform config with test.horizon override parses."""
+    valid_cfg["test"] = {
+        "test_origin": "2024-01-01",
+        "horizon": 12,
+    }
+
     cfg = parse_config(config=valid_cfg)
 
     assert cfg.test is not None
-    assert cfg.test.test_origin == "2024-01-01"
+    assert cfg.test.horizon == 12
+    # Top-level CV horizon is still 6
+    assert cfg.cross_validation.horizon == 6
+
+
+# ---- Variable horizon + test fold ordering ----
+
+
+def test_variable_horizon_test_origin_after_all_origins(
+    valid_cfg: dict,
+) -> None:
+    """test_origin ordering works with variable-horizon origins."""
+    del valid_cfg["cross_validation"]["horizon"]
+    valid_cfg["cross_validation"]["forecast_origins"] = [
+        {"origin": "2023-01-01", "horizon": 6},
+        {"origin": "2023-07-01", "horizon": 3},
+    ]
+    valid_cfg["test"] = {
+        "test_origin": "2023-07-01",
+        "horizon": 4,
+    }
+
+    with pytest.raises(ValidationError, match="strictly after"):
+        parse_config(config=valid_cfg)
+
+
+def test_variable_horizon_test_origin_type_mismatch(
+    valid_cfg: dict,
+) -> None:
+    """Type mismatch between test_origin and variable origins."""
+    del valid_cfg["cross_validation"]["horizon"]
+    valid_cfg["cross_validation"]["forecast_origins"] = [
+        {"origin": "2023-01-01", "horizon": 6},
+    ]
+    valid_cfg["test"] = {
+        "test_origin": 50,
+        "horizon": 4,
+    }
+
+    with pytest.raises(ValidationError, match="must be a string"):
+        parse_config(config=valid_cfg)
