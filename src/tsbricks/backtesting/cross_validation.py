@@ -53,12 +53,12 @@ def generate_folds(
 
     Each fold uses an expanding window: training data includes everything up to
     and including the forecast origin; validation data covers the next
-    ``cv_config.horizon`` periods after the origin.
+    *horizon* periods after the origin.  The horizon may differ per origin
+    when variable-horizon configuration is used.
 
     When ``test_config`` is provided, a test split is also generated using the
     same windowing logic: train includes ``ds <= test_origin``, test includes
-    ``test_origin < ds <= test_origin + horizon periods``.  The test fold uses
-    ``cv_config.horizon`` (there is no separate test horizon).
+    ``test_origin < ds <= test_origin + horizon periods``.
 
     Supports both datetime and integer ``ds`` columns.  The mode is inferred
     from the column dtype and cross-validated against ``data_config.freq``.
@@ -95,19 +95,35 @@ def generate_folds(
         )
 
     offset: pd.DateOffset | None = None
+
+    # Build sorted (typed_origin, horizon) pairs
+    raw_pairs = cv_config.origin_horizon_pairs()
     if is_integer_ds:
-        origins = sorted(int(o) for o in cv_config.forecast_origins)
+        origin_horizon_list = sorted((int(o), h) for o, h in raw_pairs)
     else:
-        origins = sorted(pd.Timestamp(o) for o in cv_config.forecast_origins)
+        origin_horizon_list = sorted((pd.Timestamp(o), h) for o, h in raw_pairs)
         offset = pd.tseries.frequencies.to_offset(data_config.freq)
 
-    pad_width = len(str(len(origins) - 1))
+    # Validate: no CV horizon extends past available data
+    data_end = df["ds"].max()
+    for origin, horizon in origin_horizon_list:
+        if is_integer_ds:
+            end = origin + horizon
+        else:
+            end = origin + horizon * offset
+        if end > data_end:
+            raise ValueError(
+                f"CV fold horizon exceeds available data: "
+                f"origin={origin} with horizon={horizon} "
+                f"requires data through {end}, but data "
+                f"ends at {data_end}."
+            )
+
+    pad_width = len(str(len(origin_horizon_list) - 1))
 
     cv_folds: dict[str, dict[str, pd.DataFrame]] = {}
-    for i, origin in enumerate(origins):
-        train, val, _ = _split_at_origin(
-            df, origin, cv_config.horizon, is_integer_ds, offset
-        )
+    for i, (origin, horizon) in enumerate(origin_horizon_list):
+        train, val, _ = _split_at_origin(df, origin, horizon, is_integer_ds, offset)
         fold_key = f"fold_{i:0{pad_width}d}"
         cv_folds[fold_key] = {"train": train, "val": val}
 
@@ -133,9 +149,9 @@ def generate_folds(
             )
 
         # Overlap warning: test_origin falls within last CV validation window
-        last_origin = origins[-1]
+        last_origin, last_horizon = origin_horizon_list[-1]
         _, _, last_val_end = _split_at_origin(
-            df, last_origin, cv_config.horizon, is_integer_ds, offset
+            df, last_origin, last_horizon, is_integer_ds, offset
         )
 
         if test_origin < last_val_end:
