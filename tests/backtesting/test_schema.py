@@ -1167,6 +1167,18 @@ def test_both_horizon_and_object_origins_raises() -> None:
         )
 
 
+def test_mixed_object_and_scalar_origins_raises() -> None:
+    """Mix of origin objects and plain scalars raises."""
+    with pytest.raises(ValidationError, match="must not mix"):
+        CrossValidationConfig(
+            mode="explicit",
+            forecast_origins=[
+                {"origin": "2025-06-01", "horizon": 3},
+                "2025-12-01",
+            ],
+        )
+
+
 def test_no_horizon_and_flat_origins_raises() -> None:
     """No top-level horizon + flat origins is invalid."""
     with pytest.raises(ValidationError, match="horizon.*not set"):
