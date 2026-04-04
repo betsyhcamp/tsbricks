@@ -119,8 +119,19 @@ class CrossValidationConfig(BaseModel):
                 "'horizon' fields."
             )
 
-        # Validate homogeneous origin types
+        # Validate origin types are str or int only
         raw = self.raw_origins()
+        invalid = [
+            o for o in raw if not isinstance(o, (str, int)) or isinstance(o, bool)
+        ]
+        if invalid:
+            raise ValueError(
+                "forecast_origins values must be strings "
+                "(datetime) or integers, got invalid "
+                f"types: {[type(o).__name__ for o in invalid]}."
+            )
+
+        # Validate homogeneous origin types
         types = {type(o) for o in raw}
         if len(types) > 1:
             raise ValueError(
