@@ -1124,6 +1124,24 @@ def test_variable_horizon_parses_integer() -> None:
     assert cfg.forecast_origins[1].horizon == 3
 
 
+def test_coerce_origin_objects_does_not_mutate_input() -> None:
+    """Parsing variable-horizon config does not mutate the input dict."""
+    input_origins = [
+        {"origin": "2025-06-01", "horizon": 6},
+        {"origin": "2025-12-01", "horizon": 3},
+    ]
+    input_dict = {
+        "mode": "explicit",
+        "forecast_origins": input_origins,
+    }
+
+    CrossValidationConfig(**input_dict)
+
+    # The input list should still contain plain dicts
+    assert isinstance(input_origins[0], dict)
+    assert isinstance(input_origins[1], dict)
+
+
 def test_variable_horizon_missing_horizon_raises() -> None:
     """Origin object without horizon raises ValidationError."""
     with pytest.raises(ValidationError):

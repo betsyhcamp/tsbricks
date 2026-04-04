@@ -81,13 +81,18 @@ class CrossValidationConfig(BaseModel):
         cls,
         data: Any,
     ) -> Any:
-        """Coerce origin dicts to ForecastOriginConfig."""
+        """Coerce origin dicts to ForecastOriginConfig.
+
+        Returns a shallow copy so the caller's dict is not
+        mutated.
+        """
         if not isinstance(data, dict):
             return data
         origins = data.get("forecast_origins", [])
         if not origins:
             return data
         if isinstance(origins[0], dict) and "origin" in origins[0]:
+            data = {**data}
             data["forecast_origins"] = [
                 ForecastOriginConfig(**o) if isinstance(o, dict) else o for o in origins
             ]
