@@ -102,7 +102,9 @@ class BacktestResults:
 
     Attributes:
         cv: Cross-validation results.
-        horizon: Number of forecast steps per fold.
+        horizon: Mapping of forecast origin to horizon (number of
+            forecast steps).  Includes all CV origins and, when
+            present, the test origin.
         config: Raw configuration dict that was passed to
             ``run_backtest``.
         git_hash: Full 40-character SHA of HEAD at run time.
@@ -120,7 +122,7 @@ class BacktestResults:
 
     # Required
     cv: CVResults
-    horizon: int
+    horizon: dict[pd.Timestamp | int, int]
     config: dict
 
     # Metadata
