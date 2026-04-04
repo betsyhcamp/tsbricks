@@ -591,6 +591,36 @@ def test_mixed_forecast_origins_types_raises(
         parse_config(config=valid_cfg)
 
 
+# ---- Invalid origin types rejected ----
+
+
+def test_float_forecast_origins_raises(valid_cfg: dict) -> None:
+    """Float forecast_origins are rejected."""
+    valid_cfg["cross_validation"]["forecast_origins"] = [1.5, 2.5]
+
+    with pytest.raises(ValidationError, match="invalid types"):
+        parse_config(config=valid_cfg)
+
+
+def test_float_variable_origins_raises() -> None:
+    """Float origins in variable-horizon format are rejected."""
+    with pytest.raises(ValidationError):
+        CrossValidationConfig(
+            mode="explicit",
+            forecast_origins=[
+                {"origin": 1.5, "horizon": 3},
+            ],
+        )
+
+
+def test_bool_forecast_origins_raises(valid_cfg: dict) -> None:
+    """Bool forecast_origins are rejected."""
+    valid_cfg["cross_validation"]["forecast_origins"] = [True, False]
+
+    with pytest.raises(ValidationError, match="invalid types"):
+        parse_config(config=valid_cfg)
+
+
 # ---- Datetime ordering is temporal, not lexicographic ----
 
 
