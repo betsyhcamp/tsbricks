@@ -650,6 +650,19 @@ def test_duplicate_variable_origin_horizon_pair_raises() -> None:
         )
 
 
+def test_non_normalized_duplicate_origin_horizon_raises(
+    valid_cfg: dict,
+) -> None:
+    """Non-normalized dates that resolve to the same Timestamp are duplicates."""
+    valid_cfg["cross_validation"]["forecast_origins"] = [
+        "2023-1-01",
+        "2023-01-01",
+    ]
+
+    with pytest.raises(ValidationError, match="duplicate"):
+        parse_config(config=valid_cfg)
+
+
 def test_same_origin_different_horizons_accepted() -> None:
     """Same origin with different horizons is valid."""
     cfg = CrossValidationConfig(

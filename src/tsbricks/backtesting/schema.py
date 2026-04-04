@@ -152,11 +152,16 @@ class CrossValidationConfig(BaseModel):
                 "(datetime) or all integers, got mixed "
                 f"types: {types}."
             )
-        # Reject duplicate (origin, horizon) pairs
+        # Reject duplicate (origin, horizon) pairs.
+        # Normalize string origins to Timestamp so that
+        # "2025-6-01" and "2025-06-01" are treated as equal.
         pairs = self.origin_horizon_pairs()
-        seen: set[tuple[str | int, int]] = set()
-        dupes: list[tuple[str | int, int]] = []
-        for pair in pairs:
+        normalized: list[tuple[pd.Timestamp | int, int]] = [
+            (pd.Timestamp(o), h) if isinstance(o, str) else (o, h) for o, h in pairs
+        ]
+        seen: set[tuple[pd.Timestamp | int, int]] = set()
+        dupes: list[tuple[pd.Timestamp | int, int]] = []
+        for pair in normalized:
             if pair in seen:
                 dupes.append(pair)
             seen.add(pair)
