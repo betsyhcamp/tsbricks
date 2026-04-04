@@ -76,8 +76,11 @@ def test_minimal_backtest_end_to_end() -> None:
         pd.Timestamp("2023-06-01"),
     ]
 
-    # Horizon preserved
-    assert results.horizon == 6
+    # Horizon dict: origin -> horizon for all folds
+    assert results.horizon == [
+        (pd.Timestamp("2023-01-01"), 6),
+        (pd.Timestamp("2023-06-01"), 6),
+    ]
 
     # Config preserved
     assert results.config == cfg
@@ -150,6 +153,41 @@ def test_backtest_with_test_fold() -> None:
     assert results.test.transform_params is None
 
 
+def test_test_fold_forecast_differs_from_last_cv_fold() -> None:
+    """Test fold forecast is derived from the test split, not the last CV fold.
+
+    The dummy model forecasts last_y per series. Since the
+    synthetic panel has a linear trend, different training
+    cutoffs produce different ypred values. This test verifies
+    the test fold forecast uses its own training data.
+    """
+    df = _synthetic_monthly_panel_long()
+    cfg = _minimal_config()
+    cfg["test"] = {"test_origin": "2023-07-01"}
+
+    results = run_backtest(config=cfg, df=df)
+
+    assert results.test is not None
+
+    last_cv_fold = list(results.cv.forecasts_per_fold.keys())[-1]
+    last_cv_forecast = results.cv.forecasts_per_fold[last_cv_fold]
+    test_forecast = results.test.forecasts
+
+    # The test fold trains on more data, so ypred values must
+    # differ from the last CV fold for at least one series.
+    for uid in ["A", "B"]:
+        cv_ypred = last_cv_forecast.loc[
+            last_cv_forecast["unique_id"] == uid, "ypred"
+        ].iloc[0]
+        test_ypred = test_forecast.loc[test_forecast["unique_id"] == uid, "ypred"].iloc[
+            0
+        ]
+        assert cv_ypred != test_ypred, (
+            f"Series {uid}: test fold ypred should differ "
+            f"from last CV fold (both={cv_ypred})"
+        )
+
+
 # ---- integer ds integration test ----
 
 
@@ -217,8 +255,8 @@ def test_minimal_backtest_integer_ds() -> None:
     assert len(results.cv.fold_origins) == 2
     assert results.cv.fold_origins == [10, 15]
 
-    # Horizon preserved
-    assert results.horizon == 5
+    # Horizon dict: origin -> horizon for all folds
+    assert results.horizon == [(10, 5), (15, 5)]
 
     # Config preserved
     assert results.config == cfg
@@ -494,3 +532,99 @@ def test_run_backtest_grouping_columns_fallback_to_top_level() -> None:
     results = run_backtest(config=cfg, df=df, grouping_df=grouping_df)
 
     assert isinstance(results, BacktestResults)
+
+
+# ---- variable horizon integration tests ----
+
+
+def _variable_horizon_config() -> dict:
+    """Config with variable per-origin horizons."""
+    return {
+        "data": {"freq": "MS"},
+        "cross_validation": {
+            "mode": "explicit",
+            "forecast_origins": [
+                {"origin": "2023-01-01", "horizon": 3},
+                {"origin": "2023-06-01", "horizon": 6},
+            ],
+        },
+        "model": {
+            "callable": ("tsbricks._testing.dummy_models.forecast_only"),
+        },
+        "metrics": {
+            "definitions": [
+                {
+                    "name": "rmse",
+                    "callable": "tsbricks.blocks.metrics.rmse",
+                    "type": "simple",
+                }
+            ],
+        },
+    }
+
+
+def test_variable_horizon_end_to_end() -> None:
+    """End-to-end backtest with variable per-origin horizons."""
+    df = _synthetic_monthly_panel()
+    cfg = _variable_horizon_config()
+
+    results = run_backtest(config=cfg, df=df)
+
+    assert isinstance(results, BacktestResults)
+    assert len(results.cv.forecasts_per_fold) == 2
+
+    # Horizon dict has per-origin values
+    assert results.horizon == [
+        (pd.Timestamp("2023-01-01"), 3),
+        (pd.Timestamp("2023-06-01"), 6),
+    ]
+
+    assert results.test is None
+
+
+def test_variable_horizon_with_test_fold() -> None:
+    """Variable horizons + test fold with explicit test.horizon."""
+    df = _synthetic_monthly_panel_long()
+    cfg = _variable_horizon_config()
+    cfg["test"] = {
+        "test_origin": "2023-07-01",
+        "horizon": 4,
+    }
+
+    results = run_backtest(config=cfg, df=df)
+
+    assert isinstance(results, BacktestResults)
+    assert len(results.cv.forecasts_per_fold) == 2
+
+    # Horizon dict includes CV origins + test origin
+    assert results.horizon == [
+        (pd.Timestamp("2023-01-01"), 3),
+        (pd.Timestamp("2023-06-01"), 6),
+        (pd.Timestamp("2023-07-01"), 4),
+    ]
+
+    assert results.test is not None
+    assert results.test.test_origin == pd.Timestamp("2023-07-01")
+
+
+def test_uniform_horizon_with_test_override() -> None:
+    """Uniform CV horizon + test fold with different horizon."""
+    df = _synthetic_monthly_panel_long()
+    cfg = _minimal_config()
+    cfg["test"] = {
+        "test_origin": "2023-07-01",
+        "horizon": 3,
+    }
+
+    results = run_backtest(config=cfg, df=df)
+
+    assert isinstance(results, BacktestResults)
+
+    # CV origins get horizon 6, test origin gets 3
+    assert results.horizon == [
+        (pd.Timestamp("2023-01-01"), 6),
+        (pd.Timestamp("2023-06-01"), 6),
+        (pd.Timestamp("2023-07-01"), 3),
+    ]
+
+    assert results.test is not None

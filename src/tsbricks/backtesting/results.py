@@ -102,7 +102,10 @@ class BacktestResults:
 
     Attributes:
         cv: Cross-validation results.
-        horizon: Number of forecast steps per fold.
+        horizon: List of ``(origin, horizon)`` tuples in fold
+            order.  Includes all CV origins and, when present,
+            the test origin (appended last).  Duplicate origins
+            with different horizons are preserved.
         config: Raw configuration dict that was passed to
             ``run_backtest``.
         git_hash: Full 40-character SHA of HEAD at run time.
@@ -120,7 +123,7 @@ class BacktestResults:
 
     # Required
     cv: CVResults
-    horizon: int
+    horizon: list[tuple[pd.Timestamp | int, int]]
     config: dict
 
     # Metadata
