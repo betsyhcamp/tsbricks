@@ -135,20 +135,29 @@ def generate_folds(
         else:
             test_origin = pd.Timestamp(test_config.test_origin)
 
-        train, test, test_end = _split_at_origin(
-            df, test_origin, cv_config.horizon, is_integer_ds, offset
+        # Resolve test horizon: explicit test.horizon wins,
+        # otherwise fall back to top-level cv_config.horizon.
+        # Schema validation guarantees at least one is set.
+        test_horizon: int = (
+            test_config.horizon
+            if test_config.horizon is not None
+            else cv_config.horizon  # type: ignore[assignment]
         )
 
-        # Runtime validation: test window must fit within available data
-        data_end = df["ds"].max()
+        train, test, test_end = _split_at_origin(
+            df, test_origin, test_horizon, is_integer_ds, offset
+        )
+
+        # Runtime validation: test window must fit within data
         if test_end > data_end:
             raise ValueError(
-                f"Test window exceeds available data: test_end={test_end} "
-                f"but data ends at {data_end}. Need at least "
-                f"{cv_config.horizon} periods after test_origin={test_origin}."
+                f"Test window exceeds available data: "
+                f"test_end={test_end} but data ends at "
+                f"{data_end}. Need at least {test_horizon} "
+                f"periods after test_origin={test_origin}."
             )
 
-        # Overlap warning: test_origin falls within last CV validation window
+        # Overlap warning: test_origin within last CV window
         last_origin, last_horizon = origin_horizon_list[-1]
         _, _, last_val_end = _split_at_origin(
             df, last_origin, last_horizon, is_integer_ds, offset
@@ -156,11 +165,13 @@ def generate_folds(
 
         if test_origin < last_val_end:
             warnings.warn(
-                f"Test fold overlaps with cross-validation: test_origin "
-                f"({test_origin}) falls within the last CV validation window "
-                f"(origin={last_origin}, val_end={last_val_end}). The test "
-                f"fold should ideally not overlap with any cross-validation "
-                f"window.",
+                f"Test fold overlaps with cross-validation: "
+                f"test_origin ({test_origin}) falls within "
+                f"the last CV validation window "
+                f"(origin={last_origin}, "
+                f"val_end={last_val_end}). The test fold "
+                f"should ideally not overlap with any "
+                f"cross-validation window.",
                 UserWarning,
                 stacklevel=2,
             )
