@@ -188,15 +188,14 @@ def run_backtest(
         test_config=backtest_config.test,
     )
 
+    # Build sorted (typed_origin, horizon) pairs
+    raw_pairs = backtest_config.cross_validation.origin_horizon_pairs()
     if backtest_config.data.freq == 1:
-        fold_origins = sorted(
-            int(origin) for origin in backtest_config.cross_validation.forecast_origins
-        )
+        origin_horizon_list = sorted((int(o), h) for o, h in raw_pairs)
     else:
-        fold_origins = sorted(
-            pd.Timestamp(origin)
-            for origin in backtest_config.cross_validation.forecast_origins
-        )
+        origin_horizon_list = sorted((pd.Timestamp(o), h) for o, h in raw_pairs)
+
+    fold_origins = [o for o, _ in origin_horizon_list]
 
     _validate_weights_df(weights_df, backtest_config, fold_origins)
 
@@ -222,11 +221,12 @@ def run_backtest(
             stage = "model"
             # Will need & use returned variables _variablename
             # in a future version
+            fold_horizon = origin_horizon_list[fold_idx][1]
             with capture_warnings(run_summary["warnings"], fold=fold_id, stage="model"):
                 forecast_df, _fitted_values_df, _model_object = invoke_model(
                     transformed_train,
                     backtest_config.model,
-                    backtest_config.cross_validation.horizon,
+                    fold_horizon,
                 )
 
             stage = "transform"
@@ -314,11 +314,19 @@ def run_backtest(
                 apply_transforms(test_test_df, fitted_transforms)
 
             stage = "model"
+            # Schema validation guarantees at least one is set
+            assert backtest_config.test is not None
+            test_horizon = (
+                backtest_config.test.horizon
+                if backtest_config.test.horizon is not None
+                else backtest_config.cross_validation.horizon
+            )
+            assert test_horizon is not None
             with capture_warnings(run_summary["warnings"], fold="test", stage="model"):
                 forecast_df, _fitted_values_df, _model_object = invoke_model(
                     transformed_train,
                     backtest_config.model,
-                    backtest_config.cross_validation.horizon,
+                    test_horizon,
                 )
 
             stage = "transform"
@@ -394,9 +402,14 @@ def run_backtest(
 
         raw_config = yaml.safe_load(Path(config_path).read_text())  # type: ignore[arg-type]
 
+    # Build horizon dict: origin -> horizon for all folds
+    horizon_dict: dict[pd.Timestamp | int, int] = {o: h for o, h in origin_horizon_list}
+    if backtest_config.test is not None and test_results is not None:
+        horizon_dict[test_results.test_origin] = test_horizon  # type: ignore[possibly-undefined]
+
     return BacktestResults(
         cv=cv_results,
-        horizon=backtest_config.cross_validation.horizon,
+        horizon=horizon_dict,
         config=raw_config,
         git_hash=git_hash,
         uv_lock_info=uv_lock_info,
