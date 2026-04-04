@@ -7,6 +7,8 @@ from pydantic import ValidationError
 
 from tsbricks.backtesting.schema import (
     BacktestConfig,
+    CrossValidationConfig,
+    ForecastOriginConfig,
     MetricDefinitionConfig,
     MetricsConfig,
     ParamResolverConfig,
@@ -517,14 +519,48 @@ def test_test_origin_int_not_after_max_raises(
         parse_config(config=valid_cfg)
 
 
-def test_test_horizon_rejected(valid_cfg: dict) -> None:
-    """Providing horizon in test block raises with helpful message."""
+def test_test_horizon_accepted_uniform(valid_cfg: dict) -> None:
+    """test.horizon is accepted as optional override in uniform case."""
     valid_cfg["test"] = {
         "test_origin": "2024-01-01",
         "horizon": 12,
     }
 
-    with pytest.raises(ValidationError, match="test.horizon is not supported"):
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.test is not None
+    assert cfg.test.horizon == 12
+
+
+def test_test_horizon_none_uniform(valid_cfg: dict) -> None:
+    """test.horizon defaults to None, inherits from top-level."""
+    valid_cfg["test"] = {"test_origin": "2024-01-01"}
+
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.test is not None
+    assert cfg.test.horizon is None
+
+
+def test_test_horizon_zero_raises(valid_cfg: dict) -> None:
+    """test.horizon=0 raises ValidationError."""
+    valid_cfg["test"] = {
+        "test_origin": "2024-01-01",
+        "horizon": 0,
+    }
+
+    with pytest.raises(ValidationError):
+        parse_config(config=valid_cfg)
+
+
+def test_test_horizon_negative_raises(valid_cfg: dict) -> None:
+    """Negative test.horizon raises ValidationError."""
+    valid_cfg["test"] = {
+        "test_origin": "2024-01-01",
+        "horizon": -1,
+    }
+
+    with pytest.raises(ValidationError):
         parse_config(config=valid_cfg)
 
 
@@ -553,6 +589,95 @@ def test_mixed_forecast_origins_types_raises(
 
     with pytest.raises(ValidationError, match="mixed types"):
         parse_config(config=valid_cfg)
+
+
+# ---- Invalid origin types rejected ----
+
+
+def test_float_forecast_origins_raises(valid_cfg: dict) -> None:
+    """Float forecast_origins are rejected."""
+    valid_cfg["cross_validation"]["forecast_origins"] = [1.5, 2.5]
+
+    with pytest.raises(ValidationError, match="invalid types"):
+        parse_config(config=valid_cfg)
+
+
+def test_float_variable_origins_raises() -> None:
+    """Float origins in variable-horizon format are rejected."""
+    with pytest.raises(ValidationError):
+        CrossValidationConfig(
+            mode="explicit",
+            forecast_origins=[
+                {"origin": 1.5, "horizon": 3},
+            ],
+        )
+
+
+def test_bool_forecast_origins_raises(valid_cfg: dict) -> None:
+    """Bool forecast_origins are rejected."""
+    valid_cfg["cross_validation"]["forecast_origins"] = [True, False]
+
+    with pytest.raises(ValidationError, match="invalid types"):
+        parse_config(config=valid_cfg)
+
+
+# ---- Duplicate (origin, horizon) pair rejection ----
+
+
+def test_duplicate_origin_horizon_pair_raises(
+    valid_cfg: dict,
+) -> None:
+    """Duplicate (origin, horizon) pair in uniform format raises."""
+    valid_cfg["cross_validation"]["forecast_origins"] = [
+        "2023-01-01",
+        "2023-07-01",
+        "2023-01-01",
+    ]
+
+    with pytest.raises(ValidationError, match="duplicate"):
+        parse_config(config=valid_cfg)
+
+
+def test_duplicate_variable_origin_horizon_pair_raises() -> None:
+    """Duplicate (origin, horizon) in variable format raises."""
+    with pytest.raises(ValidationError, match="duplicate"):
+        CrossValidationConfig(
+            mode="explicit",
+            forecast_origins=[
+                {"origin": "2025-06-01", "horizon": 6},
+                {"origin": "2025-06-01", "horizon": 6},
+            ],
+        )
+
+
+def test_non_normalized_duplicate_origin_horizon_raises(
+    valid_cfg: dict,
+) -> None:
+    """Non-normalized dates that resolve to the same Timestamp are duplicates."""
+    valid_cfg["cross_validation"]["forecast_origins"] = [
+        "2023-1-01",
+        "2023-01-01",
+    ]
+
+    with pytest.raises(ValidationError, match="duplicate"):
+        parse_config(config=valid_cfg)
+
+
+def test_same_origin_different_horizons_accepted() -> None:
+    """Same origin with different horizons is valid."""
+    cfg = CrossValidationConfig(
+        mode="explicit",
+        forecast_origins=[
+            {"origin": "2025-06-01", "horizon": 3},
+            {"origin": "2025-06-01", "horizon": 6},
+        ],
+    )
+
+    pairs = cfg.origin_horizon_pairs()
+    assert pairs == [
+        ("2025-06-01", 3),
+        ("2025-06-01", 6),
+    ]
 
 
 # ---- Datetime ordering is temporal, not lexicographic ----
@@ -1015,3 +1140,343 @@ def test_parse_config_top_level_metrics_fields(
     assert cfg.metrics.grouping_columns == ["region"]
     assert cfg.metrics.grouping_source == "/data/grouping.parquet"
     assert cfg.metrics.weights_source == "/data/weights.parquet"
+
+
+# ---- Variable forecast horizon: CrossValidationConfig ----
+
+
+def _variable_cv_config(
+    origins: list[dict],
+) -> CrossValidationConfig:
+    """Build a variable-horizon CrossValidationConfig."""
+    return CrossValidationConfig(
+        mode="explicit",
+        forecast_origins=origins,
+    )
+
+
+def test_variable_horizon_parses_datetime() -> None:
+    """Variable-horizon config with datetime origins parses."""
+    cfg = _variable_cv_config(
+        [
+            {"origin": "2025-06-01", "horizon": 6},
+            {"origin": "2025-12-01", "horizon": 3},
+        ]
+    )
+
+    assert cfg.horizon is None
+    assert len(cfg.forecast_origins) == 2
+    assert isinstance(cfg.forecast_origins[0], ForecastOriginConfig)
+
+
+def test_variable_horizon_parses_integer() -> None:
+    """Variable-horizon config with integer origins parses."""
+    cfg = _variable_cv_config(
+        [
+            {"origin": 10, "horizon": 5},
+            {"origin": 20, "horizon": 3},
+        ]
+    )
+
+    assert cfg.horizon is None
+    assert cfg.forecast_origins[0].origin == 10
+    assert cfg.forecast_origins[1].horizon == 3
+
+
+def test_coerce_origin_objects_does_not_mutate_input() -> None:
+    """Parsing variable-horizon config does not mutate the input dict."""
+    input_origins = [
+        {"origin": "2025-06-01", "horizon": 6},
+        {"origin": "2025-12-01", "horizon": 3},
+    ]
+    input_dict = {
+        "mode": "explicit",
+        "forecast_origins": input_origins,
+    }
+
+    CrossValidationConfig(**input_dict)
+
+    # The input list should still contain plain dicts
+    assert isinstance(input_origins[0], dict)
+    assert isinstance(input_origins[1], dict)
+
+
+def test_variable_horizon_missing_horizon_raises() -> None:
+    """Origin object without horizon raises ValidationError."""
+    with pytest.raises(ValidationError):
+        _variable_cv_config(
+            [
+                {"origin": "2025-06-01", "horizon": 6},
+                {"origin": "2025-12-01"},
+            ]
+        )
+
+
+def test_variable_horizon_zero_horizon_raises() -> None:
+    """Origin object with horizon=0 raises ValidationError."""
+    with pytest.raises(ValidationError):
+        _variable_cv_config(
+            [
+                {"origin": "2025-06-01", "horizon": 0},
+            ]
+        )
+
+
+def test_variable_horizon_negative_horizon_raises() -> None:
+    """Origin object with negative horizon raises."""
+    with pytest.raises(ValidationError):
+        _variable_cv_config(
+            [
+                {"origin": "2025-06-01", "horizon": -1},
+            ]
+        )
+
+
+def test_both_horizon_and_object_origins_raises() -> None:
+    """Top-level horizon + object origins is invalid."""
+    with pytest.raises(ValidationError, match="Cannot specify both"):
+        CrossValidationConfig(
+            mode="explicit",
+            horizon=6,
+            forecast_origins=[
+                {"origin": "2025-06-01", "horizon": 3},
+            ],
+        )
+
+
+def test_mixed_object_and_scalar_origins_raises() -> None:
+    """Mix of origin objects and plain scalars raises."""
+    with pytest.raises(ValidationError, match="must not mix"):
+        CrossValidationConfig(
+            mode="explicit",
+            forecast_origins=[
+                {"origin": "2025-06-01", "horizon": 3},
+                "2025-12-01",
+            ],
+        )
+
+
+def test_no_horizon_and_flat_origins_raises() -> None:
+    """No top-level horizon + flat origins is invalid."""
+    with pytest.raises(ValidationError, match="horizon.*not set"):
+        CrossValidationConfig(
+            mode="explicit",
+            forecast_origins=["2025-06-01", "2025-12-01"],
+        )
+
+
+def test_variable_horizon_mixed_origin_types_raises() -> None:
+    """Mixed str/int origins in variable format raises."""
+    with pytest.raises(ValidationError, match="mixed types"):
+        _variable_cv_config(
+            [
+                {"origin": "2025-06-01", "horizon": 6},
+                {"origin": 10, "horizon": 3},
+            ]
+        )
+
+
+def test_variable_horizon_non_normalized_dates_warns() -> None:
+    """Non-normalized dates in variable format emit warning."""
+    with pytest.warns(UserWarning, match="non-normalized"):
+        _variable_cv_config(
+            [
+                {"origin": "2025-6-01", "horizon": 6},
+            ]
+        )
+
+
+# ---- origin_horizon_pairs() ----
+
+
+def test_origin_horizon_pairs_uniform() -> None:
+    """Uniform config returns consistent (origin, horizon) pairs."""
+    cfg = CrossValidationConfig(
+        mode="explicit",
+        horizon=6,
+        forecast_origins=["2025-06-01", "2025-12-01"],
+    )
+
+    pairs = cfg.origin_horizon_pairs()
+
+    assert pairs == [
+        ("2025-06-01", 6),
+        ("2025-12-01", 6),
+    ]
+
+
+def test_origin_horizon_pairs_variable() -> None:
+    """Variable config returns per-origin (origin, horizon) pairs."""
+    cfg = _variable_cv_config(
+        [
+            {"origin": "2025-06-01", "horizon": 6},
+            {"origin": "2025-12-01", "horizon": 3},
+        ]
+    )
+
+    pairs = cfg.origin_horizon_pairs()
+
+    assert pairs == [
+        ("2025-06-01", 6),
+        ("2025-12-01", 3),
+    ]
+
+
+def test_origin_horizon_pairs_integer() -> None:
+    """origin_horizon_pairs works with integer origins."""
+    cfg = CrossValidationConfig(
+        mode="explicit",
+        horizon=5,
+        forecast_origins=[10, 20],
+    )
+
+    pairs = cfg.origin_horizon_pairs()
+
+    assert pairs == [(10, 5), (20, 5)]
+
+
+# ---- raw_origins() ----
+
+
+def test_raw_origins_uniform() -> None:
+    """raw_origins returns flat list for uniform config."""
+    cfg = CrossValidationConfig(
+        mode="explicit",
+        horizon=6,
+        forecast_origins=["2025-06-01", "2025-12-01"],
+    )
+
+    assert cfg.raw_origins() == [
+        "2025-06-01",
+        "2025-12-01",
+    ]
+
+
+def test_raw_origins_variable() -> None:
+    """raw_origins extracts origin values from objects."""
+    cfg = _variable_cv_config(
+        [
+            {"origin": "2025-06-01", "horizon": 6},
+            {"origin": "2025-12-01", "horizon": 3},
+        ]
+    )
+
+    assert cfg.raw_origins() == [
+        "2025-06-01",
+        "2025-12-01",
+    ]
+
+
+# ---- Variable horizon via parse_config (full round-trip) ----
+
+
+def test_parse_config_variable_horizon(
+    valid_cfg: dict,
+) -> None:
+    """Full config with variable horizons parses correctly."""
+    del valid_cfg["cross_validation"]["horizon"]
+    valid_cfg["cross_validation"]["forecast_origins"] = [
+        {"origin": "2023-01-01", "horizon": 6},
+        {"origin": "2023-07-01", "horizon": 3},
+    ]
+
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.cross_validation.horizon is None
+    assert len(cfg.cross_validation.forecast_origins) == 2
+    pairs = cfg.cross_validation.origin_horizon_pairs()
+    assert pairs == [
+        ("2023-01-01", 6),
+        ("2023-07-01", 3),
+    ]
+
+
+def test_parse_config_variable_horizon_with_test_horizon(
+    valid_cfg: dict,
+) -> None:
+    """Variable-horizon config with explicit test.horizon parses."""
+    del valid_cfg["cross_validation"]["horizon"]
+    valid_cfg["cross_validation"]["forecast_origins"] = [
+        {"origin": "2023-01-01", "horizon": 6},
+        {"origin": "2023-07-01", "horizon": 3},
+    ]
+    valid_cfg["test"] = {
+        "test_origin": "2024-01-01",
+        "horizon": 4,
+    }
+
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.test is not None
+    assert cfg.test.test_origin == "2024-01-01"
+    assert cfg.test.horizon == 4
+
+
+def test_parse_config_variable_horizon_test_no_horizon_raises(
+    valid_cfg: dict,
+) -> None:
+    """Variable horizons + test fold without horizon raises."""
+    del valid_cfg["cross_validation"]["horizon"]
+    valid_cfg["cross_validation"]["forecast_origins"] = [
+        {"origin": "2023-01-01", "horizon": 6},
+        {"origin": "2023-07-01", "horizon": 3},
+    ]
+    valid_cfg["test"] = {"test_origin": "2024-01-01"}
+
+    with pytest.raises(ValidationError, match="test.horizon is required"):
+        parse_config(config=valid_cfg)
+
+
+def test_parse_config_uniform_test_horizon_override(
+    valid_cfg: dict,
+) -> None:
+    """Uniform config with test.horizon override parses."""
+    valid_cfg["test"] = {
+        "test_origin": "2024-01-01",
+        "horizon": 12,
+    }
+
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.test is not None
+    assert cfg.test.horizon == 12
+    # Top-level CV horizon is still 6
+    assert cfg.cross_validation.horizon == 6
+
+
+# ---- Variable horizon + test fold ordering ----
+
+
+def test_variable_horizon_test_origin_after_all_origins(
+    valid_cfg: dict,
+) -> None:
+    """test_origin ordering works with variable-horizon origins."""
+    del valid_cfg["cross_validation"]["horizon"]
+    valid_cfg["cross_validation"]["forecast_origins"] = [
+        {"origin": "2023-01-01", "horizon": 6},
+        {"origin": "2023-07-01", "horizon": 3},
+    ]
+    valid_cfg["test"] = {
+        "test_origin": "2023-07-01",
+        "horizon": 4,
+    }
+
+    with pytest.raises(ValidationError, match="strictly after"):
+        parse_config(config=valid_cfg)
+
+
+def test_variable_horizon_test_origin_type_mismatch(
+    valid_cfg: dict,
+) -> None:
+    """Type mismatch between test_origin and variable origins."""
+    del valid_cfg["cross_validation"]["horizon"]
+    valid_cfg["cross_validation"]["forecast_origins"] = [
+        {"origin": "2023-01-01", "horizon": 6},
+    ]
+    valid_cfg["test"] = {
+        "test_origin": 50,
+        "horizon": 4,
+    }
+
+    with pytest.raises(ValidationError, match="must be a string"):
+        parse_config(config=valid_cfg)

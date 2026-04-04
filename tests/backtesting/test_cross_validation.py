@@ -18,6 +18,16 @@ def _cv_config(origins: Sequence[str | int], horizon: int = 6) -> CrossValidatio
     )
 
 
+def _variable_cv_config(
+    origin_horizons: list[tuple[str | int, int]],
+) -> CrossValidationConfig:
+    """Build a variable-horizon CrossValidationConfig."""
+    return CrossValidationConfig(
+        mode="explicit",
+        forecast_origins=[{"origin": o, "horizon": h} for o, h in origin_horizons],
+    )
+
+
 # ---- fold count and structure ----
 
 
@@ -307,6 +317,7 @@ def test_test_train_includes_test_origin(monthly_panel, data_config):
         test_config=_test_config(test_origin),
     )
 
+    assert test_split is not None
     train = test_split["train"]
     assert pd.Timestamp(test_origin) in train["ds"].values
     assert (train["ds"] <= pd.Timestamp(test_origin)).all()
@@ -322,6 +333,7 @@ def test_test_set_starts_after_test_origin(monthly_panel, data_config):
         test_config=_test_config(test_origin),
     )
 
+    assert test_split is not None
     test = test_split["test"]
     assert (test["ds"] > pd.Timestamp(test_origin)).all()
 
@@ -337,6 +349,7 @@ def test_test_set_ends_at_origin_plus_horizon(monthly_panel, data_config):
         test_config=_test_config(test_origin),
     )
 
+    assert test_split is not None
     test = test_split["test"]
     expected_end = pd.Timestamp(
         test_origin
@@ -355,6 +368,7 @@ def test_test_set_row_count_per_series(monthly_panel, data_config):
         test_config=_test_config(test_origin),
     )
 
+    assert test_split is not None
     test = test_split["test"]
     for uid in ["A", "B"]:
         assert len(test[test["unique_id"] == uid]) == horizon
@@ -374,6 +388,7 @@ def test_integer_test_split_boundaries(integer_panel, integer_data_config):
         test_config=_test_config(test_origin),
     )
 
+    assert test_split is not None
     train = test_split["train"]
     test = test_split["test"]
 
@@ -393,6 +408,7 @@ def test_integer_test_set_row_count_per_series(integer_panel, integer_data_confi
         test_config=_test_config(test_origin),
     )
 
+    assert test_split is not None
     test = test_split["test"]
     for uid in ["A", "B"]:
         assert len(test[test["unique_id"] == uid]) == horizon
@@ -478,3 +494,266 @@ def test_cv_folds_unchanged_with_test_config(monthly_panel, data_config):
             folds_without[key]["train"], folds_with[key]["train"]
         )
         pd.testing.assert_frame_equal(folds_without[key]["val"], folds_with[key]["val"])
+
+
+# ---- variable horizons: CV fold generation ----
+
+
+def test_variable_horizon_val_sizes(monthly_panel, data_config):
+    """Each fold's val set has the correct per-origin horizon length."""
+    cv_config = _variable_cv_config(
+        [
+            ("2022-07-01", 3),  # 3 months val
+            ("2023-01-01", 6),  # 6 months val
+        ]
+    )
+    folds, _ = generate_folds(monthly_panel, cv_config, data_config)
+
+    assert len(folds) == 2
+    # fold_0 is earlier origin (2022-07-01) with horizon 3
+    for uid in ["A", "B"]:
+        val_0 = folds["fold_0"]["val"]
+        assert len(val_0[val_0["unique_id"] == uid]) == 3
+    # fold_1 is later origin (2023-01-01) with horizon 6
+    for uid in ["A", "B"]:
+        val_1 = folds["fold_1"]["val"]
+        assert len(val_1[val_1["unique_id"] == uid]) == 6
+
+
+def test_variable_horizon_val_end_dates(monthly_panel, data_config):
+    """Each fold's val set ends at origin + horizon periods."""
+    cv_config = _variable_cv_config(
+        [
+            ("2022-07-01", 3),
+            ("2023-01-01", 6),
+        ]
+    )
+    folds, _ = generate_folds(monthly_panel, cv_config, data_config)
+    ms = pd.tseries.frequencies.to_offset("MS")
+
+    val_0 = folds["fold_0"]["val"]
+    assert val_0["ds"].max() == pd.Timestamp("2022-07-01") + 3 * ms
+
+    val_1 = folds["fold_1"]["val"]
+    assert val_1["ds"].max() == pd.Timestamp("2023-01-01") + 6 * ms
+
+
+def test_variable_horizon_integer_ds(integer_panel, integer_data_config):
+    """Variable horizons work with integer ds."""
+    cv_config = _variable_cv_config(
+        [
+            (5, 3),
+            (12, 5),
+        ]
+    )
+    folds, _ = generate_folds(integer_panel, cv_config, integer_data_config)
+
+    assert len(folds) == 2
+    # fold_0 (origin=5, horizon=3): val ds in [6, 7, 8]
+    val_0 = folds["fold_0"]["val"]
+    assert val_0["ds"].min() == 6
+    assert val_0["ds"].max() == 8
+    for uid in ["A", "B"]:
+        assert len(val_0[val_0["unique_id"] == uid]) == 3
+    # fold_1 (origin=12, horizon=5): val ds in [13..17]
+    val_1 = folds["fold_1"]["val"]
+    assert val_1["ds"].min() == 13
+    assert val_1["ds"].max() == 17
+    for uid in ["A", "B"]:
+        assert len(val_1[val_1["unique_id"] == uid]) == 5
+
+
+def test_variable_horizon_chronological_order(monthly_panel, data_config):
+    """Folds are ordered chronologically regardless of input order."""
+    cv_config = _variable_cv_config(
+        [
+            ("2023-01-01", 6),
+            ("2022-07-01", 3),
+        ]
+    )
+    folds, _ = generate_folds(monthly_panel, cv_config, data_config)
+
+    keys = list(folds.keys())
+    assert keys == ["fold_0", "fold_1"]
+    # fold_0 should have the earlier origin
+    assert folds["fold_0"]["train"]["ds"].max() == pd.Timestamp("2022-07-01")
+    assert folds["fold_1"]["train"]["ds"].max() == pd.Timestamp("2023-01-01")
+
+
+# ---- variable horizons: horizon-exceeds-data validation ----
+
+
+def test_variable_horizon_exceeds_data_raises(
+    monthly_panel,
+    data_config,
+):
+    """CV origin with horizon past available data raises ValueError."""
+    # monthly_panel ends at 2023-12-01; origin 2023-07-01 + 12 months
+    # requires data through 2024-07-01
+    cv_config = _variable_cv_config(
+        [
+            ("2022-07-01", 3),
+            ("2023-07-01", 12),
+        ]
+    )
+    with pytest.raises(ValueError, match="CV fold horizon exceeds available data"):
+        generate_folds(monthly_panel, cv_config, data_config)
+
+
+def test_variable_horizon_integer_exceeds_data_raises(
+    integer_panel,
+    integer_data_config,
+):
+    """Integer CV origin with horizon past data raises ValueError."""
+    # integer_panel ds 0..23; origin 20 + horizon 10 = 30 > 23
+    cv_config = _variable_cv_config(
+        [
+            (5, 3),
+            (20, 10),
+        ]
+    )
+    with pytest.raises(ValueError, match="CV fold horizon exceeds available data"):
+        generate_folds(integer_panel, cv_config, integer_data_config)
+
+
+def test_uniform_horizon_exceeds_data_raises(
+    monthly_panel,
+    data_config,
+):
+    """Uniform horizon past available data also raises ValueError."""
+    # monthly_panel ends at 2023-12-01; origin 2023-07-01 + 12
+    cv_config = _cv_config(["2023-07-01"], horizon=12)
+    with pytest.raises(ValueError, match="CV fold horizon exceeds available data"):
+        generate_folds(monthly_panel, cv_config, data_config)
+
+
+# ---- test fold: resolved test horizon ----
+
+
+def test_test_fold_inherits_uniform_horizon(monthly_panel, data_config):
+    """Test fold uses cv_config.horizon when test.horizon is None."""
+    cv_config = _cv_config(["2023-01-01"], horizon=3)
+    tc = TestConfig(test_origin="2023-07-01")
+
+    _, test_split = generate_folds(
+        monthly_panel, cv_config, data_config, test_config=tc
+    )
+
+    assert test_split is not None
+    test_df = test_split["test"]
+    ms = pd.tseries.frequencies.to_offset("MS")
+    expected_end = pd.Timestamp("2023-07-01") + 3 * ms
+    assert test_df["ds"].max() == expected_end
+    for uid in ["A", "B"]:
+        assert len(test_df[test_df["unique_id"] == uid]) == 3
+
+
+def test_test_fold_explicit_horizon_override(monthly_panel, data_config):
+    """Test fold uses test.horizon when explicitly provided."""
+    cv_config = _cv_config(["2023-01-01"], horizon=3)
+    tc = TestConfig(test_origin="2023-07-01", horizon=5)
+
+    _, test_split = generate_folds(
+        monthly_panel, cv_config, data_config, test_config=tc
+    )
+
+    assert test_split is not None
+    test_df = test_split["test"]
+    ms = pd.tseries.frequencies.to_offset("MS")
+    expected_end = pd.Timestamp("2023-07-01") + 5 * ms
+    assert test_df["ds"].max() == expected_end
+    for uid in ["A", "B"]:
+        assert len(test_df[test_df["unique_id"] == uid]) == 5
+
+
+def test_test_fold_with_variable_cv_horizons(data_config):
+    """Test fold works with variable CV horizons + explicit test.horizon."""
+    # Need longer panel: 2022-01 to 2024-12
+    dates = pd.date_range("2022-01-01", periods=36, freq="MS")
+    rows = []
+    for uid in ["A", "B"]:
+        for ds in dates:
+            rows.append({"unique_id": uid, "ds": ds, "y": 1.0})
+    df = pd.DataFrame(rows)
+
+    cv_config = _variable_cv_config(
+        [
+            ("2023-01-01", 6),
+            ("2023-07-01", 3),
+        ]
+    )
+    tc = TestConfig(test_origin="2024-01-01", horizon=4)
+
+    folds, test_split = generate_folds(df, cv_config, data_config, test_config=tc)
+
+    # CV folds have per-origin horizons
+    assert len(folds) == 2
+    for uid in ["A", "B"]:
+        val_0 = folds["fold_0"]["val"]
+        assert len(val_0[val_0["unique_id"] == uid]) == 6
+        val_1 = folds["fold_1"]["val"]
+        assert len(val_1[val_1["unique_id"] == uid]) == 3
+
+    # Test fold uses its own horizon of 4
+    assert test_split is not None
+    test_df = test_split["test"]
+    for uid in ["A", "B"]:
+        assert len(test_df[test_df["unique_id"] == uid]) == 4
+
+
+def test_test_fold_explicit_horizon_exceeds_data_raises(
+    monthly_panel,
+    data_config,
+):
+    """Test fold with explicit horizon past data raises ValueError."""
+    cv_config = _cv_config(["2023-01-01"], horizon=3)
+    # monthly_panel ends 2023-12-01; 2023-07-01 + 12 = 2024-07-01
+    tc = TestConfig(test_origin="2023-07-01", horizon=12)
+
+    with pytest.raises(ValueError, match="Test window exceeds available data"):
+        generate_folds(monthly_panel, cv_config, data_config, test_config=tc)
+
+
+def test_test_fold_integer_explicit_horizon(
+    integer_panel,
+    integer_data_config,
+):
+    """Integer test fold uses explicit test.horizon."""
+    cv_config = _cv_config([10], horizon=5)
+    tc = TestConfig(test_origin=15, horizon=3)
+
+    _, test_split = generate_folds(
+        integer_panel,
+        cv_config,
+        integer_data_config,
+        test_config=tc,
+    )
+
+    assert test_split is not None
+    test_df = test_split["test"]
+    assert test_df["ds"].min() == 16
+    assert test_df["ds"].max() == 18
+    for uid in ["A", "B"]:
+        assert len(test_df[test_df["unique_id"] == uid]) == 3
+
+
+def test_overlap_warning_uses_last_cv_origin_horizon(
+    monthly_panel,
+    data_config,
+):
+    """Overlap warning uses the last CV origin's actual horizon."""
+    # Last CV origin 2023-01-01 with horizon=3 -> val_end=2023-04-01
+    # test_origin 2023-03-01 < 2023-04-01 -> overlap warning
+    cv_config = _variable_cv_config(
+        [
+            ("2022-07-01", 6),
+            ("2023-01-01", 3),
+        ]
+    )
+    tc = TestConfig(test_origin="2023-03-01", horizon=3)
+
+    with pytest.warns(
+        UserWarning,
+        match="Test fold overlaps with cross-validation",
+    ):
+        generate_folds(monthly_panel, cv_config, data_config, test_config=tc)

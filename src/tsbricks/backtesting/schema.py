@@ -24,6 +24,13 @@ def _warn_non_normalized_dates(dates: list[str], field_name: str) -> None:
         )
 
 
+class ForecastOriginConfig(BaseModel):
+    """Per-origin configuration for variable-horizon backtesting."""
+
+    origin: str | int
+    horizon: int = Field(gt=0)
+
+
 class DataConfig(BaseModel):
     """Data section: column mapping and frequency."""
 
@@ -42,31 +49,153 @@ class DataConfig(BaseModel):
 
 
 class CrossValidationConfig(BaseModel):
-    """Cross-validation section (explicit mode only in V1)."""
+    """Cross-validation section (explicit mode only in V1).
+
+    Supports two mutually exclusive horizon formats:
+
+    **Uniform** — a single ``horizon`` applies to all origins::
+
+        horizon: 6
+        forecast_origins: ["2025-12-01", "2026-12-01"]
+
+    **Variable** — each origin specifies its own ``horizon``::
+
+        forecast_origins:
+          - origin: "2025-12-01"
+            horizon: 6
+          - origin: "2026-12-01"
+            horizon: 5
+    """
 
     mode: Literal["explicit"]
-    horizon: int = Field(gt=0)
-    forecast_origins: list[str | int] = Field(min_length=1)
+    horizon: int | None = Field(default=None, gt=0)
+    forecast_origins: list[Any] = Field(min_length=1)
 
     # Future: parametric mode fields
     n_folds: int | None = None
     step_size: int | None = None
 
-    @field_validator("forecast_origins")
+    @model_validator(mode="before")
     @classmethod
-    def _validate_homogeneous_types(
+    def _coerce_origin_objects(
         cls,
-        v: list[str | int],
-    ) -> list[str | int]:
-        types = {type(o) for o in v}
+        data: Any,
+    ) -> Any:
+        """Coerce origin dicts to ForecastOriginConfig.
+
+        Returns a shallow copy so the caller's dict is not
+        mutated.
+        """
+        if not isinstance(data, dict):
+            return data
+        origins = data.get("forecast_origins", [])
+        if not origins:
+            return data
+        if isinstance(origins[0], dict) and "origin" in origins[0]:
+            data = {**data}
+            data["forecast_origins"] = [
+                ForecastOriginConfig(**o) if isinstance(o, dict) else o for o in origins
+            ]
+        return data
+
+    @model_validator(mode="after")
+    def _validate_horizon_format(
+        self,
+    ) -> CrossValidationConfig:
+        """Enforce mutual exclusivity of formats."""
+        origins = self.forecast_origins
+
+        # Reject mixed object/scalar lists
+        has_objects = any(isinstance(o, ForecastOriginConfig) for o in origins)
+        has_scalars = any(not isinstance(o, ForecastOriginConfig) for o in origins)
+        if has_objects and has_scalars:
+            raise ValueError(
+                "forecast_origins must not mix per-origin "
+                "horizon objects with plain origin values."
+            )
+
+        is_object_list = has_objects
+
+        if self.horizon is not None and is_object_list:
+            raise ValueError(
+                "Cannot specify both a top-level "
+                "'horizon' and per-origin horizon objects "
+                "in 'forecast_origins'. Use one format "
+                "or the other."
+            )
+
+        if self.horizon is None and not is_object_list:
+            raise ValueError(
+                "When 'horizon' is not set, "
+                "'forecast_origins' must be a list of "
+                "objects each with 'origin' and "
+                "'horizon' fields."
+            )
+
+        # Validate origin types are str or int only
+        raw = self.raw_origins()
+        invalid = [
+            o for o in raw if not isinstance(o, (str, int)) or isinstance(o, bool)
+        ]
+        if invalid:
+            raise ValueError(
+                "forecast_origins values must be strings "
+                "(datetime) or integers, got invalid "
+                f"types: {[type(o).__name__ for o in invalid]}."
+            )
+
+        # Validate homogeneous origin types
+        types = {type(o) for o in raw}
         if len(types) > 1:
             raise ValueError(
-                "forecast_origins must be all strings (datetime) or all "
-                f"integers, got mixed types: {types}."
+                "forecast_origins must be all strings "
+                "(datetime) or all integers, got mixed "
+                f"types: {types}."
             )
-        if all(isinstance(o, str) for o in v):
-            _warn_non_normalized_dates([str(o) for o in v], "forecast_origins")
-        return v
+        # Reject duplicate (origin, horizon) pairs.
+        # Normalize string origins to Timestamp so that
+        # "2025-6-01" and "2025-06-01" are treated as equal.
+        pairs = self.origin_horizon_pairs()
+        normalized: list[tuple[pd.Timestamp | int, int]] = [
+            (pd.Timestamp(o), h) if isinstance(o, str) else (o, h) for o, h in pairs
+        ]
+        seen: set[tuple[pd.Timestamp | int, int]] = set()
+        dupes: list[tuple[pd.Timestamp | int, int]] = []
+        for pair in normalized:
+            if pair in seen:
+                dupes.append(pair)
+            seen.add(pair)
+        if dupes:
+            raise ValueError(
+                f"forecast_origins contains duplicate (origin, horizon) pairs: {dupes}."
+            )
+
+        if all(isinstance(o, str) for o in raw):
+            _warn_non_normalized_dates(
+                [str(o) for o in raw],
+                "forecast_origins",
+            )
+
+        return self
+
+    def raw_origins(self) -> list[str | int]:
+        """Return raw origin values, regardless of format."""
+        if self.horizon is not None:
+            return list(self.forecast_origins)
+        return [o.origin for o in self.forecast_origins]
+
+    def origin_horizon_pairs(
+        self,
+    ) -> list[tuple[str | int, int]]:
+        """Return normalized ``(origin, horizon)`` tuples.
+
+        Works for both uniform and variable horizon formats,
+        so downstream code does not need to branch on the
+        config shape.
+        """
+        if self.horizon is not None:
+            return [(o, self.horizon) for o in self.forecast_origins]
+        return [(o.origin, o.horizon) for o in self.forecast_origins]
 
 
 class TransformConfig(BaseModel):
@@ -147,7 +276,7 @@ class MetricDefinitionConfig(BaseModel):
     scope: Literal["per_series", "group", "global"] = "per_series"
     aggregation: Literal["per_fold_mean", "pooled"] = "per_fold_mean"
     params: dict[str, Any] | None = None
-    grouping_columns: list[str] | None = Field(None, min_length=1)
+    grouping_columns: list[str] | None = Field(default=None, min_length=1)
     per_series_params: dict[str, dict[str, Any]] | None = None
     param_resolvers: dict[str, ParamResolverConfig] | None = None
     aggregation_callable: str | None = None
@@ -191,7 +320,7 @@ class MetricsConfig(BaseModel):
     """Metrics section: definitions and optional grouping."""
 
     definitions: list[MetricDefinitionConfig]
-    grouping_columns: list[str] | None = Field(None, min_length=1)
+    grouping_columns: list[str] | None = Field(default=None, min_length=1)
     grouping_source: str | None = None
     weights_source: str | None = None
 
@@ -224,23 +353,16 @@ class MetricsConfig(BaseModel):
 class TestConfig(BaseModel):
     """Test fold configuration.
 
-    The test fold uses ``cross_validation.horizon``; a separate
-    ``test.horizon`` is not supported.
+    ``horizon`` is optional.  When provided it overrides the
+    top-level ``cross_validation.horizon`` for the test fold.
+    When omitted, the test fold inherits ``cross_validation.horizon``
+    (which must exist — validated by ``BacktestConfig``).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     test_origin: str | int
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_horizon(cls, data: Any) -> Any:
-        if isinstance(data, dict) and "horizon" in data:
-            raise ValueError(
-                "test.horizon is not supported; the test fold uses "
-                "cross_validation.horizon."
-            )
-        return data
+    horizon: int | None = Field(default=None, gt=0)
 
 
 class BacktestConfig(BaseModel):
@@ -264,8 +386,17 @@ class BacktestConfig(BaseModel):
         if self.test is None:
             return self
 
+        # Test horizon must be resolvable: either test.horizon
+        # is set, or cross_validation.horizon provides a default.
+        if self.test.horizon is None and self.cross_validation.horizon is None:
+            raise ValueError(
+                "test.horizon is required when using "
+                "per-origin horizons (no top-level "
+                "cross_validation.horizon to fall back to)."
+            )
+
         test_origin = self.test.test_origin
-        origins = self.cross_validation.forecast_origins
+        origins = self.cross_validation.raw_origins()
 
         # Type consistency: test_origin must match forecast_origins type
         origin_types_are_str = all(isinstance(o, str) for o in origins)
