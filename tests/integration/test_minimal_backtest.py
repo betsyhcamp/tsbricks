@@ -153,6 +153,41 @@ def test_backtest_with_test_fold() -> None:
     assert results.test.transform_params is None
 
 
+def test_test_fold_forecast_differs_from_last_cv_fold() -> None:
+    """Test fold forecast is derived from the test split, not the last CV fold.
+
+    The dummy model forecasts last_y per series. Since the
+    synthetic panel has a linear trend, different training
+    cutoffs produce different ypred values. This test verifies
+    the test fold forecast uses its own training data.
+    """
+    df = _synthetic_monthly_panel_long()
+    cfg = _minimal_config()
+    cfg["test"] = {"test_origin": "2023-07-01"}
+
+    results = run_backtest(config=cfg, df=df)
+
+    assert results.test is not None
+
+    last_cv_fold = list(results.cv.forecasts_per_fold.keys())[-1]
+    last_cv_forecast = results.cv.forecasts_per_fold[last_cv_fold]
+    test_forecast = results.test.forecasts
+
+    # The test fold trains on more data, so ypred values must
+    # differ from the last CV fold for at least one series.
+    for uid in ["A", "B"]:
+        cv_ypred = last_cv_forecast.loc[
+            last_cv_forecast["unique_id"] == uid, "ypred"
+        ].iloc[0]
+        test_ypred = test_forecast.loc[test_forecast["unique_id"] == uid, "ypred"].iloc[
+            0
+        ]
+        assert cv_ypred != test_ypred, (
+            f"Series {uid}: test fold ypred should differ "
+            f"from last CV fold (both={cv_ypred})"
+        )
+
+
 # ---- integer ds integration test ----
 
 

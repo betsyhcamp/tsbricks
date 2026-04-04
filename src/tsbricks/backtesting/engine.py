@@ -339,6 +339,12 @@ def run_backtest(
                     test_horizon,
                 )
 
+            stage = "transform"
+            with capture_warnings(
+                run_summary["warnings"], fold="test", stage="transform"
+            ):
+                forecast_original = inverse_transforms(forecast_df, fitted_transforms)
+
             test_fold_weights: dict[str, float] | None = None
             if weights_df is not None:
                 test_rows = weights_df[
