@@ -299,7 +299,25 @@ def run_backtest(
 
     # ---- test fold ----
     test_results: TestResults | None = None
+    test_horizon: int | None = None
+    test_origin_typed: pd.Timestamp | int | None = None
     if test_split is not None:
+        # Resolve test horizon and typed origin before try/except
+        # so they are available for the horizon dict even if the
+        # test fold fails.
+        assert backtest_config.test is not None
+        test_horizon = (
+            backtest_config.test.horizon
+            if backtest_config.test.horizon is not None
+            else backtest_config.cross_validation.horizon
+        )
+        assert test_horizon is not None
+
+        if backtest_config.data.freq == 1:
+            test_origin_typed = int(backtest_config.test.test_origin)
+        else:
+            test_origin_typed = pd.Timestamp(backtest_config.test.test_origin)
+
         stage = "transform"
         try:
             test_train_df = test_split["train"]
@@ -314,34 +332,11 @@ def run_backtest(
                 apply_transforms(test_test_df, fitted_transforms)
 
             stage = "model"
-            # Schema validation guarantees at least one is set
-            assert backtest_config.test is not None
-            test_horizon = (
-                backtest_config.test.horizon
-                if backtest_config.test.horizon is not None
-                else backtest_config.cross_validation.horizon
-            )
-            assert test_horizon is not None
             with capture_warnings(run_summary["warnings"], fold="test", stage="model"):
                 forecast_df, _fitted_values_df, _model_object = invoke_model(
                     transformed_train,
                     backtest_config.model,
                     test_horizon,
-                )
-
-            stage = "transform"
-            with capture_warnings(
-                run_summary["warnings"], fold="test", stage="transform"
-            ):
-                forecast_original = inverse_transforms(forecast_df, fitted_transforms)
-
-            if backtest_config.data.freq == 1:
-                test_origin_typed: pd.Timestamp | int = int(
-                    backtest_config.test.test_origin  # type: ignore[union-attr]
-                )
-            else:
-                test_origin_typed = pd.Timestamp(
-                    backtest_config.test.test_origin  # type: ignore[union-attr]
                 )
 
             test_fold_weights: dict[str, float] | None = None
@@ -402,10 +397,11 @@ def run_backtest(
 
         raw_config = yaml.safe_load(Path(config_path).read_text())  # type: ignore[arg-type]
 
-    # Build horizon dict: origin -> horizon for all folds
+    # Build horizon dict: origin -> horizon for all configured
+    # folds (CV + test), regardless of whether folds succeeded.
     horizon_dict: dict[pd.Timestamp | int, int] = {o: h for o, h in origin_horizon_list}
-    if backtest_config.test is not None and test_results is not None:
-        horizon_dict[test_results.test_origin] = test_horizon  # type: ignore[possibly-undefined]
+    if test_origin_typed is not None and test_horizon is not None:
+        horizon_dict[test_origin_typed] = test_horizon
 
     return BacktestResults(
         cv=cv_results,
