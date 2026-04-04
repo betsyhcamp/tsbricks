@@ -99,9 +99,17 @@ class CrossValidationConfig(BaseModel):
     ) -> CrossValidationConfig:
         """Enforce mutual exclusivity of formats."""
         origins = self.forecast_origins
-        is_object_list = len(origins) > 0 and isinstance(
-            origins[0], ForecastOriginConfig
-        )
+
+        # Reject mixed object/scalar lists
+        has_objects = any(isinstance(o, ForecastOriginConfig) for o in origins)
+        has_scalars = any(not isinstance(o, ForecastOriginConfig) for o in origins)
+        if has_objects and has_scalars:
+            raise ValueError(
+                "forecast_origins must not mix per-origin "
+                "horizon objects with plain origin values."
+            )
+
+        is_object_list = has_objects
 
         if self.horizon is not None and is_object_list:
             raise ValueError(
