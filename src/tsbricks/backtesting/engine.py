@@ -403,15 +403,17 @@ def run_backtest(
 
         raw_config = yaml.safe_load(Path(config_path).read_text())  # type: ignore[arg-type]
 
-    # Build horizon dict: origin -> horizon for all configured
+    # Build horizon list: (origin, horizon) for all configured
     # folds (CV + test), regardless of whether folds succeeded.
-    horizon_dict: dict[pd.Timestamp | int, int] = {o: h for o, h in origin_horizon_list}
+    horizon_list: list[tuple[pd.Timestamp | int, int]] = [
+        (o, h) for o, h in origin_horizon_list
+    ]
     if test_origin_typed is not None and test_horizon is not None:
-        horizon_dict[test_origin_typed] = test_horizon
+        horizon_list.append((test_origin_typed, test_horizon))
 
     return BacktestResults(
         cv=cv_results,
-        horizon=horizon_dict,
+        horizon=horizon_list,
         config=raw_config,
         git_hash=git_hash,
         uv_lock_info=uv_lock_info,

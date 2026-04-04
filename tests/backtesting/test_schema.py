@@ -621,6 +621,52 @@ def test_bool_forecast_origins_raises(valid_cfg: dict) -> None:
         parse_config(config=valid_cfg)
 
 
+# ---- Duplicate (origin, horizon) pair rejection ----
+
+
+def test_duplicate_origin_horizon_pair_raises(
+    valid_cfg: dict,
+) -> None:
+    """Duplicate (origin, horizon) pair in uniform format raises."""
+    valid_cfg["cross_validation"]["forecast_origins"] = [
+        "2023-01-01",
+        "2023-07-01",
+        "2023-01-01",
+    ]
+
+    with pytest.raises(ValidationError, match="duplicate"):
+        parse_config(config=valid_cfg)
+
+
+def test_duplicate_variable_origin_horizon_pair_raises() -> None:
+    """Duplicate (origin, horizon) in variable format raises."""
+    with pytest.raises(ValidationError, match="duplicate"):
+        CrossValidationConfig(
+            mode="explicit",
+            forecast_origins=[
+                {"origin": "2025-06-01", "horizon": 6},
+                {"origin": "2025-06-01", "horizon": 6},
+            ],
+        )
+
+
+def test_same_origin_different_horizons_accepted() -> None:
+    """Same origin with different horizons is valid."""
+    cfg = CrossValidationConfig(
+        mode="explicit",
+        forecast_origins=[
+            {"origin": "2025-06-01", "horizon": 3},
+            {"origin": "2025-06-01", "horizon": 6},
+        ],
+    )
+
+    pairs = cfg.origin_horizon_pairs()
+    assert pairs == [
+        ("2025-06-01", 3),
+        ("2025-06-01", 6),
+    ]
+
+
 # ---- Datetime ordering is temporal, not lexicographic ----
 
 
