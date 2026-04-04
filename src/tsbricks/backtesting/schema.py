@@ -152,6 +152,19 @@ class CrossValidationConfig(BaseModel):
                 "(datetime) or all integers, got mixed "
                 f"types: {types}."
             )
+        # Reject duplicate (origin, horizon) pairs
+        pairs = self.origin_horizon_pairs()
+        seen: set[tuple[str | int, int]] = set()
+        dupes: list[tuple[str | int, int]] = []
+        for pair in pairs:
+            if pair in seen:
+                dupes.append(pair)
+            seen.add(pair)
+        if dupes:
+            raise ValueError(
+                f"forecast_origins contains duplicate (origin, horizon) pairs: {dupes}."
+            )
+
         if all(isinstance(o, str) for o in raw):
             _warn_non_normalized_dates(
                 [str(o) for o in raw],

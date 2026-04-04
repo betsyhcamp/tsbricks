@@ -77,10 +77,10 @@ def test_minimal_backtest_end_to_end() -> None:
     ]
 
     # Horizon dict: origin -> horizon for all folds
-    assert results.horizon == {
-        pd.Timestamp("2023-01-01"): 6,
-        pd.Timestamp("2023-06-01"): 6,
-    }
+    assert results.horizon == [
+        (pd.Timestamp("2023-01-01"), 6),
+        (pd.Timestamp("2023-06-01"), 6),
+    ]
 
     # Config preserved
     assert results.config == cfg
@@ -256,7 +256,7 @@ def test_minimal_backtest_integer_ds() -> None:
     assert results.cv.fold_origins == [10, 15]
 
     # Horizon dict: origin -> horizon for all folds
-    assert results.horizon == {10: 5, 15: 5}
+    assert results.horizon == [(10, 5), (15, 5)]
 
     # Config preserved
     assert results.config == cfg
@@ -574,10 +574,10 @@ def test_variable_horizon_end_to_end() -> None:
     assert len(results.cv.forecasts_per_fold) == 2
 
     # Horizon dict has per-origin values
-    assert results.horizon == {
-        pd.Timestamp("2023-01-01"): 3,
-        pd.Timestamp("2023-06-01"): 6,
-    }
+    assert results.horizon == [
+        (pd.Timestamp("2023-01-01"), 3),
+        (pd.Timestamp("2023-06-01"), 6),
+    ]
 
     assert results.test is None
 
@@ -597,11 +597,11 @@ def test_variable_horizon_with_test_fold() -> None:
     assert len(results.cv.forecasts_per_fold) == 2
 
     # Horizon dict includes CV origins + test origin
-    assert results.horizon == {
-        pd.Timestamp("2023-01-01"): 3,
-        pd.Timestamp("2023-06-01"): 6,
-        pd.Timestamp("2023-07-01"): 4,
-    }
+    assert results.horizon == [
+        (pd.Timestamp("2023-01-01"), 3),
+        (pd.Timestamp("2023-06-01"), 6),
+        (pd.Timestamp("2023-07-01"), 4),
+    ]
 
     assert results.test is not None
     assert results.test.test_origin == pd.Timestamp("2023-07-01")
@@ -621,10 +621,10 @@ def test_uniform_horizon_with_test_override() -> None:
     assert isinstance(results, BacktestResults)
 
     # CV origins get horizon 6, test origin gets 3
-    assert results.horizon == {
-        pd.Timestamp("2023-01-01"): 6,
-        pd.Timestamp("2023-06-01"): 6,
-        pd.Timestamp("2023-07-01"): 3,
-    }
+    assert results.horizon == [
+        (pd.Timestamp("2023-01-01"), 6),
+        (pd.Timestamp("2023-06-01"), 6),
+        (pd.Timestamp("2023-07-01"), 3),
+    ]
 
     assert results.test is not None

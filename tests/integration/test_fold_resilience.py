@@ -190,9 +190,8 @@ def test_test_fold_failure_preserves_cv_results(monkeypatch):
     assert test_errors[0]["error_type"] == "ValueError"
     assert "Test fold fails" in test_errors[0]["message"]
 
-    # Horizon dict still includes the test origin
-    assert pd.Timestamp("2023-07-01") in results.horizon
-    assert results.horizon[pd.Timestamp("2023-07-01")] == 6
+    # Horizon list still includes the test origin
+    assert (pd.Timestamp("2023-07-01"), 6) in results.horizon
 
 
 # ---- warning capture ----
