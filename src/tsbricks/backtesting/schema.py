@@ -374,14 +374,24 @@ class EvaluationConfig(BaseModel):
             )
         return self
 
-    @model_validator(mode="after")
-    def _check_aggregated_not_yet_supported(self) -> EvaluationConfig:
-        if self.aggregated is not None:
-            raise ValueError(
-                "evaluation.aggregated is not yet supported. "
-                "Only evaluation.native is available."
-            )
-        return self
+
+class AggregationConfig(BaseModel):
+    """Temporal aggregation settings for rolling up forecasts to a coarser frequency."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    calendar_source: str | None = None
+    timestamp_col: str
+    period_col: str
+    agg_func: str = "sum"
+
+    @field_validator("agg_func")
+    @classmethod
+    def _validate_agg_func(cls, v: str) -> str:
+        allowed = {"sum"}
+        if v not in allowed:
+            raise ValueError(f"agg_func must be one of {sorted(allowed)}, got '{v}'.")
+        return v
 
 
 class TestConfig(BaseModel):
@@ -407,6 +417,7 @@ class BacktestConfig(BaseModel):
     transforms: list[TransformConfig] | None = None
     model: ModelConfig
     evaluation: EvaluationConfig
+    aggregation: AggregationConfig | None = None
 
     # Test fold (optional — presence controls whether test fold runs)
     test: TestConfig | None = None
@@ -468,6 +479,23 @@ class BacktestConfig(BaseModel):
                     f"all forecast_origins (max={max_origin_ts})."
                 )
 
+        return self
+
+    @model_validator(mode="after")
+    def _validate_aggregation_evaluation_consistency(self) -> BacktestConfig:
+        has_agg_config = self.aggregation is not None
+        has_agg_eval = self.evaluation.aggregated is not None
+
+        if has_agg_eval and not has_agg_config:
+            raise ValueError(
+                "evaluation.aggregated requires an 'aggregation' config block "
+                "that defines how to aggregate forecasts."
+            )
+        if has_agg_config and not has_agg_eval:
+            raise ValueError(
+                "'aggregation' config block requires evaluation.aggregated "
+                "to define metrics for the aggregated level."
+            )
         return self
 
 
