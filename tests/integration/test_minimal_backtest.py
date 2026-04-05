@@ -30,14 +30,18 @@ def _minimal_config() -> dict:
         "model": {
             "callable": "tsbricks._testing.dummy_models.forecast_only",
         },
-        "metrics": {
-            "definitions": [
-                {
-                    "name": "rmse",
-                    "callable": "tsbricks.blocks.metrics.rmse",
-                    "type": "simple",
-                }
-            ],
+        "evaluation": {
+            "native": {
+                "metrics": {
+                    "definitions": [
+                        {
+                            "name": "rmse",
+                            "callable": "tsbricks.blocks.metrics.rmse",
+                            "type": "simple",
+                        }
+                    ],
+                },
+            },
         },
     }
 
@@ -212,14 +216,18 @@ def _integer_ds_config() -> dict:
         "model": {
             "callable": "tsbricks._testing.dummy_models.forecast_only",
         },
-        "metrics": {
-            "definitions": [
-                {
-                    "name": "rmse",
-                    "callable": "tsbricks.blocks.metrics.rmse",
-                    "type": "simple",
-                }
-            ],
+        "evaluation": {
+            "native": {
+                "metrics": {
+                    "definitions": [
+                        {
+                            "name": "rmse",
+                            "callable": "tsbricks.blocks.metrics.rmse",
+                            "type": "simple",
+                        }
+                    ],
+                },
+            },
         },
     }
 
@@ -354,16 +362,20 @@ def _group_scope_config() -> dict:
         "model": {
             "callable": "tsbricks._testing.dummy_models.forecast_only",
         },
-        "metrics": {
-            "definitions": [
-                {
-                    "name": "rmse_group",
-                    "callable": "tsbricks.blocks.metrics.rmse",
-                    "type": "simple",
-                    "scope": "group",
-                    "grouping_columns": ["category"],
-                }
-            ],
+        "evaluation": {
+            "native": {
+                "metrics": {
+                    "definitions": [
+                        {
+                            "name": "rmse_group",
+                            "callable": "tsbricks.blocks.metrics.rmse",
+                            "type": "simple",
+                            "scope": "group",
+                            "grouping_columns": ["category"],
+                        }
+                    ],
+                },
+            },
         },
     }
 
@@ -413,16 +425,20 @@ def _global_scope_config() -> dict:
         "model": {
             "callable": "tsbricks._testing.dummy_models.forecast_only",
         },
-        "metrics": {
-            "definitions": [
-                {
-                    "name": "wape_global",
-                    "callable": "tsbricks.blocks.metrics.rmse",
-                    "type": "simple",
-                    "scope": "global",
-                    "aggregation_callable": "my.agg.weighted_mean",
-                }
-            ],
+        "evaluation": {
+            "native": {
+                "metrics": {
+                    "definitions": [
+                        {
+                            "name": "wape_global",
+                            "callable": "tsbricks.blocks.metrics.rmse",
+                            "type": "simple",
+                            "scope": "global",
+                            "aggregation_callable": "my.agg.weighted_mean",
+                        }
+                    ],
+                },
+            },
         },
     }
 
@@ -489,7 +505,7 @@ def test_run_backtest_loads_grouping_df_from_config_source(tmp_path) -> None:
     pd.DataFrame({"unique_id": ["A", "B"], "category": ["cat1", "cat2"]}).to_parquet(
         grouping_path
     )
-    cfg["metrics"]["grouping_source"] = str(grouping_path)
+    cfg["evaluation"]["native"]["metrics"]["grouping_source"] = str(grouping_path)
 
     results = run_backtest(config=cfg, df=df)
 
@@ -503,7 +519,7 @@ def test_run_backtest_loads_weights_df_from_config_source(tmp_path) -> None:
     cfg = _minimal_config()
     weights_path = tmp_path / "weights.parquet"
     _monthly_weights_df().to_parquet(weights_path)
-    cfg["metrics"]["weights_source"] = str(weights_path)
+    cfg["evaluation"]["native"]["metrics"]["weights_source"] = str(weights_path)
 
     results = run_backtest(config=cfg, df=df)
 
@@ -517,7 +533,7 @@ def test_run_backtest_grouping_columns_fallback_to_top_level() -> None:
     cfg = _minimal_config()
     # Group-scope metric with NO definition-level grouping_columns;
     # top-level metrics.grouping_columns provides the fallback.
-    cfg["metrics"]["definitions"].append(
+    cfg["evaluation"]["native"]["metrics"]["definitions"].append(
         {
             "name": "rmse_group",
             "callable": "tsbricks.blocks.metrics.rmse",
@@ -525,7 +541,7 @@ def test_run_backtest_grouping_columns_fallback_to_top_level() -> None:
             "scope": "group",
         }
     )
-    cfg["metrics"]["grouping_columns"] = ["category"]
+    cfg["evaluation"]["native"]["metrics"]["grouping_columns"] = ["category"]
     grouping_df = pd.DataFrame({"unique_id": ["A", "B"], "category": ["cat1", "cat2"]})
 
     # Validation should pass — grouping_df has the fallback column "category"
@@ -551,14 +567,18 @@ def _variable_horizon_config() -> dict:
         "model": {
             "callable": ("tsbricks._testing.dummy_models.forecast_only"),
         },
-        "metrics": {
-            "definitions": [
-                {
-                    "name": "rmse",
-                    "callable": "tsbricks.blocks.metrics.rmse",
-                    "type": "simple",
-                }
-            ],
+        "evaluation": {
+            "native": {
+                "metrics": {
+                    "definitions": [
+                        {
+                            "name": "rmse",
+                            "callable": "tsbricks.blocks.metrics.rmse",
+                            "type": "simple",
+                        }
+                    ],
+                },
+            },
         },
     }
 
