@@ -62,8 +62,8 @@ def test_parse_valid_dict_metrics_section(valid_cfg: dict) -> None:
     """Valid dict parses metrics section correctly."""
     cfg = parse_config(config=valid_cfg)
 
-    assert len(cfg.metrics.definitions) == 1
-    assert cfg.metrics.definitions[0].name == "rmse"
+    assert len(cfg.evaluation.native.metrics.definitions) == 1
+    assert cfg.evaluation.native.metrics.definitions[0].name == "rmse"
 
 
 # ---- defaults by config model ----
@@ -196,7 +196,7 @@ def test_missing_model_callable_raises(valid_cfg: dict) -> None:
 
 def test_missing_metrics_definitions_raises(valid_cfg: dict) -> None:
     """Missing metrics.definitions raises ValidationError."""
-    del valid_cfg["metrics"]["definitions"]
+    del valid_cfg["evaluation"]["native"]["metrics"]["definitions"]
 
     with pytest.raises(ValidationError):
         parse_config(config=valid_cfg)
@@ -212,7 +212,7 @@ def test_invalid_cv_mode_raises(valid_cfg: dict) -> None:
 
 def test_invalid_metric_type_raises(valid_cfg: dict) -> None:
     """Invalid metric type value raises ValidationError."""
-    valid_cfg["metrics"]["definitions"][0]["type"] = "unknown"
+    valid_cfg["evaluation"]["native"]["metrics"]["definitions"][0]["type"] = "unknown"
 
     with pytest.raises(ValidationError):
         parse_config(config=valid_cfg)
@@ -987,7 +987,7 @@ def test_full_config_defaults(valid_cfg: dict) -> None:
     cfg = parse_config(config=valid_cfg)
 
     assert isinstance(cfg, BacktestConfig)
-    defn = cfg.metrics.definitions[0]
+    defn = cfg.evaluation.native.metrics.definitions[0]
     assert defn.scope == "per_series"
     assert defn.aggregation == "per_fold_mean"
     assert defn.grouping_columns is None
@@ -995,8 +995,8 @@ def test_full_config_defaults(valid_cfg: dict) -> None:
     assert defn.param_resolvers is None
     assert defn.aggregation_callable is None
     assert defn.aggregation_params is None
-    assert cfg.metrics.grouping_source is None
-    assert cfg.metrics.weights_source is None
+    assert cfg.evaluation.native.metrics.grouping_source is None
+    assert cfg.evaluation.native.metrics.weights_source is None
 
 
 # ---- Empty grouping_columns rejected ----
@@ -1061,36 +1061,40 @@ def test_multi_top_level_grouping_columns_raises() -> None:
 
 def _cfg_with_all_metric_fields(valid_cfg: dict) -> dict:
     """Inject all metric fields into valid_cfg for parse_config tests."""
-    valid_cfg["metrics"] = {
-        "definitions": [
-            {
-                "name": "rmse",
-                "callable": "tsbricks.blocks.metrics.rmse",
-                "type": "simple",
-            },
-            {
-                "name": "wape_global",
-                "callable": "my.metrics.wape",
-                "type": "simple",
-                "scope": "global",
-                "aggregation": "pooled",
-                "grouping_columns": ["category"],
-                "per_series_params": {
-                    "m": {"A": 12, "B": 6},
-                },
-                "param_resolvers": {
-                    "scale": {
-                        "callable": "my.resolvers.scale",
-                        "params": {"season_length": 12},
+    valid_cfg["evaluation"] = {
+        "native": {
+            "metrics": {
+                "definitions": [
+                    {
+                        "name": "rmse",
+                        "callable": "tsbricks.blocks.metrics.rmse",
+                        "type": "simple",
                     },
-                },
-                "aggregation_callable": "my.agg.weighted_mean",
-                "aggregation_params": {"normalize": True},
+                    {
+                        "name": "wape_global",
+                        "callable": "my.metrics.wape",
+                        "type": "simple",
+                        "scope": "global",
+                        "aggregation": "pooled",
+                        "grouping_columns": ["category"],
+                        "per_series_params": {
+                            "m": {"A": 12, "B": 6},
+                        },
+                        "param_resolvers": {
+                            "scale": {
+                                "callable": "my.resolvers.scale",
+                                "params": {"season_length": 12},
+                            },
+                        },
+                        "aggregation_callable": "my.agg.weighted_mean",
+                        "aggregation_params": {"normalize": True},
+                    },
+                ],
+                "grouping_columns": ["region"],
+                "grouping_source": "/data/grouping.parquet",
+                "weights_source": "/data/weights.parquet",
             },
-        ],
-        "grouping_columns": ["region"],
-        "grouping_source": "/data/grouping.parquet",
-        "weights_source": "/data/weights.parquet",
+        },
     }
     return valid_cfg
 
@@ -1101,7 +1105,7 @@ def test_parse_config_definition_defaults(
     """Definition with only required fields preserves defaults after parsing."""
     cfg = parse_config(config=_cfg_with_all_metric_fields(valid_cfg))
 
-    d0 = cfg.metrics.definitions[0]
+    d0 = cfg.evaluation.native.metrics.definitions[0]
     assert d0.scope == "per_series"
     assert d0.aggregation == "per_fold_mean"
     assert d0.grouping_columns is None
@@ -1117,7 +1121,7 @@ def test_parse_config_definition_all_fields(
     """All metric definition fields parse correctly from raw dict."""
     cfg = parse_config(config=_cfg_with_all_metric_fields(valid_cfg))
 
-    d1 = cfg.metrics.definitions[1]
+    d1 = cfg.evaluation.native.metrics.definitions[1]
     assert d1.scope == "global"
     assert d1.aggregation == "pooled"
     assert d1.grouping_columns == ["category"]
@@ -1137,9 +1141,9 @@ def test_parse_config_top_level_metrics_fields(
     """Top-level MetricsConfig fields parse correctly from raw dict."""
     cfg = parse_config(config=_cfg_with_all_metric_fields(valid_cfg))
 
-    assert cfg.metrics.grouping_columns == ["region"]
-    assert cfg.metrics.grouping_source == "/data/grouping.parquet"
-    assert cfg.metrics.weights_source == "/data/weights.parquet"
+    assert cfg.evaluation.native.metrics.grouping_columns == ["region"]
+    assert cfg.evaluation.native.metrics.grouping_source == "/data/grouping.parquet"
+    assert cfg.evaluation.native.metrics.weights_source == "/data/weights.parquet"
 
 
 # ---- Variable forecast horizon: CrossValidationConfig ----

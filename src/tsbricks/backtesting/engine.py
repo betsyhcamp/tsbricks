@@ -32,7 +32,8 @@ def _validate_grouping_df(
             missing, or if grouping_df is missing required columns.
     """
     has_group_scope = any(
-        defn.scope == "group" for defn in backtest_config.metrics.definitions
+        defn.scope == "group"
+        for defn in backtest_config.evaluation.native.metrics.definitions
     )
 
     if has_group_scope and grouping_df is None:
@@ -49,8 +50,8 @@ def _validate_grouping_df(
 
     # Collect all referenced grouping columns
     required_cols: set[str] = set()
-    top_level_cols = backtest_config.metrics.grouping_columns
-    for defn in backtest_config.metrics.definitions:
+    top_level_cols = backtest_config.evaluation.native.metrics.grouping_columns
+    for defn in backtest_config.evaluation.native.metrics.definitions:
         if defn.grouping_columns is not None:
             required_cols.update(defn.grouping_columns)
         elif top_level_cols is not None:
@@ -84,7 +85,7 @@ def _validate_weights_df(
     """
     has_aggregation_callable = any(
         defn.aggregation_callable is not None
-        for defn in backtest_config.metrics.definitions
+        for defn in backtest_config.evaluation.native.metrics.definitions
     )
 
     if has_aggregation_callable and weights_df is None:
@@ -170,16 +171,26 @@ def run_backtest(
     # ---- resolve grouping_df ----
     if isinstance(grouping_df, str):
         grouping_df = pd.read_parquet(grouping_df)
-    elif grouping_df is None and backtest_config.metrics.grouping_source is not None:
-        grouping_df = pd.read_parquet(backtest_config.metrics.grouping_source)
+    elif (
+        grouping_df is None
+        and backtest_config.evaluation.native.metrics.grouping_source is not None
+    ):
+        grouping_df = pd.read_parquet(
+            backtest_config.evaluation.native.metrics.grouping_source
+        )
 
     _validate_grouping_df(grouping_df, backtest_config)
 
     # ---- resolve weights_df ----
     if isinstance(weights_df, str):
         weights_df = pd.read_parquet(weights_df)
-    elif weights_df is None and backtest_config.metrics.weights_source is not None:
-        weights_df = pd.read_parquet(backtest_config.metrics.weights_source)
+    elif (
+        weights_df is None
+        and backtest_config.evaluation.native.metrics.weights_source is not None
+    ):
+        weights_df = pd.read_parquet(
+            backtest_config.evaluation.native.metrics.weights_source
+        )
 
     cv_folds, test_split = generate_folds(
         df,
@@ -254,7 +265,7 @@ def run_backtest(
                     y_true=val_df,
                     y_pred=forecast_original,
                     y_train=train_df,
-                    metrics_config=backtest_config.metrics,
+                    metrics_config=backtest_config.evaluation.native.metrics,
                     fold_id=fold_id,
                     grouping_df=grouping_df,
                     fold_weights=fold_weights,
@@ -363,7 +374,7 @@ def run_backtest(
                     y_true=test_test_df,
                     y_pred=forecast_original,
                     y_train=test_train_df,
-                    metrics_config=backtest_config.metrics,
+                    metrics_config=backtest_config.evaluation.native.metrics,
                     fold_id="test",
                     grouping_df=grouping_df,
                     fold_weights=test_fold_weights,

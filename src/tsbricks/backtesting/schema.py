@@ -402,7 +402,7 @@ class BacktestConfig(BaseModel):
     cross_validation: CrossValidationConfig
     transforms: list[TransformConfig] | None = None
     model: ModelConfig
-    metrics: MetricsConfig
+    evaluation: EvaluationConfig
 
     # Test fold (optional — presence controls whether test fold runs)
     test: TestConfig | None = None
