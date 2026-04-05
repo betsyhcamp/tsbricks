@@ -331,7 +331,7 @@ class MetricsConfig(BaseModel):
         # Composite grouping keys are not yet supported
         if self.grouping_columns is not None and len(self.grouping_columns) > 1:
             raise ValueError(
-                f"Top-level metrics.grouping_columns has "
+                f"metrics.grouping_columns has "
                 f"{len(self.grouping_columns)} columns, but only "
                 f"single-column grouping is currently supported."
             )
@@ -344,9 +344,39 @@ class MetricsConfig(BaseModel):
                     raise ValueError(
                         f"Metric '{defn.name}' has scope='group' "
                         f"but no grouping_columns on the metric "
-                        f"definition or in the top-level "
-                        f"metrics config."
+                        f"definition or in the enclosing "
+                        f"metrics section."
                     )
+        return self
+
+
+class EvaluationLevelConfig(BaseModel):
+    """Single evaluation level (e.g., native or aggregated)."""
+
+    metrics: MetricsConfig
+
+
+class EvaluationConfig(BaseModel):
+    """Top-level evaluation section with named levels."""
+
+    native: EvaluationLevelConfig | None = None
+    aggregated: EvaluationLevelConfig | None = None
+
+    @model_validator(mode="after")
+    def _check_at_least_one_level(self) -> EvaluationConfig:
+        if self.native is None and self.aggregated is None:
+            raise ValueError(
+                "evaluation must specify at least one of 'native' or 'aggregated'."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_aggregated_not_yet_supported(self) -> EvaluationConfig:
+        if self.aggregated is not None:
+            raise ValueError(
+                "evaluation.aggregated is not yet supported. "
+                "Only evaluation.native is available."
+            )
         return self
 
 
