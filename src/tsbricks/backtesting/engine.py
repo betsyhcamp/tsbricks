@@ -39,7 +39,7 @@ def _validate_grouping_df(
     if has_group_scope and grouping_df is None:
         raise ValueError(
             "grouping_df is required when any metric has scope='group', "
-            "but none was provided (and metrics.grouping_source is not set)."
+            "but none was provided (and no grouping_source is configured)."
         )
 
     if grouping_df is None:
@@ -91,7 +91,7 @@ def _validate_weights_df(
     if has_aggregation_callable and weights_df is None:
         raise ValueError(
             "weights_df is required when any metric has an aggregation_callable, "
-            "but none was provided (and metrics.weights_source is not set)."
+            "but none was provided (and no weights_source is configured)."
         )
 
     if weights_df is None:

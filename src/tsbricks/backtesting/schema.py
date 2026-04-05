@@ -353,11 +353,15 @@ class MetricsConfig(BaseModel):
 class EvaluationLevelConfig(BaseModel):
     """Single evaluation level (e.g., native or aggregated)."""
 
+    model_config = ConfigDict(extra="forbid")
+
     metrics: MetricsConfig
 
 
 class EvaluationConfig(BaseModel):
     """Top-level evaluation section with named levels."""
+
+    model_config = ConfigDict(extra="forbid")
 
     native: EvaluationLevelConfig | None = None
     aggregated: EvaluationLevelConfig | None = None
