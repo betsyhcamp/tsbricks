@@ -83,16 +83,20 @@ def valid_cfg() -> dict:
             "callable": "tsbricks._testing.dummy_models.forecast_only",
             "hyperparameters": {},
         },
-        "metrics": {
-            "definitions": [
-                {
-                    "name": "rmse",
-                    "callable": "tsbricks.blocks.metrics.rmse",
-                    "type": "simple",
-                    "scope": "per_series",
-                    "aggregation": "per_fold_mean",
-                }
-            ],
+        "evaluation": {
+            "native": {
+                "metrics": {
+                    "definitions": [
+                        {
+                            "name": "rmse",
+                            "callable": "tsbricks.blocks.metrics.rmse",
+                            "type": "simple",
+                            "scope": "per_series",
+                            "aggregation": "per_fold_mean",
+                        }
+                    ],
+                },
+            },
         },
     }
 

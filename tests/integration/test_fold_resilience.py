@@ -40,14 +40,18 @@ def _config_with_failing_model() -> dict:
         "model": {
             "callable": ("tsbricks._testing.dummy_models.always_fails"),
         },
-        "metrics": {
-            "definitions": [
-                {
-                    "name": "rmse",
-                    "callable": "tsbricks.blocks.metrics.rmse",
-                    "type": "simple",
-                }
-            ],
+        "evaluation": {
+            "native": {
+                "metrics": {
+                    "definitions": [
+                        {
+                            "name": "rmse",
+                            "callable": "tsbricks.blocks.metrics.rmse",
+                            "type": "simple",
+                        }
+                    ],
+                },
+            },
         },
     }
 
@@ -64,14 +68,18 @@ def _config_with_working_model() -> dict:
         "model": {
             "callable": ("tsbricks._testing.dummy_models.forecast_only"),
         },
-        "metrics": {
-            "definitions": [
-                {
-                    "name": "rmse",
-                    "callable": "tsbricks.blocks.metrics.rmse",
-                    "type": "simple",
-                }
-            ],
+        "evaluation": {
+            "native": {
+                "metrics": {
+                    "definitions": [
+                        {
+                            "name": "rmse",
+                            "callable": "tsbricks.blocks.metrics.rmse",
+                            "type": "simple",
+                        }
+                    ],
+                },
+            },
         },
     }
 
@@ -209,14 +217,18 @@ def _config_with_warning_model() -> dict:
         "model": {
             "callable": ("tsbricks._testing.dummy_models.forecast_with_warning"),
         },
-        "metrics": {
-            "definitions": [
-                {
-                    "name": "rmse",
-                    "callable": "tsbricks.blocks.metrics.rmse",
-                    "type": "simple",
-                }
-            ],
+        "evaluation": {
+            "native": {
+                "metrics": {
+                    "definitions": [
+                        {
+                            "name": "rmse",
+                            "callable": "tsbricks.blocks.metrics.rmse",
+                            "type": "simple",
+                        }
+                    ],
+                },
+            },
         },
     }
 
