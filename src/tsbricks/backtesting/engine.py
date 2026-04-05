@@ -10,8 +10,14 @@ import pandas as pd
 from tsbricks.blocks.metadata import get_git_hash, get_uv_lock_info
 from tsbricks.backtesting.cross_validation import generate_folds
 from tsbricks.backtesting.evaluation import evaluate_metrics
-from tsbricks.backtesting.results import BacktestResults, CVResults, TestResults
+from tsbricks.backtesting.results import (
+    AggregatedResults,
+    BacktestResults,
+    CVResults,
+    TestResults,
+)
 from tsbricks.backtesting.schema import BacktestConfig, parse_config
+from tsbricks.backtesting.temporal_agg import aggregate_backtest
 from tsbricks.runner import (
     apply_transforms,
     capture_warnings,
@@ -136,6 +142,7 @@ def run_backtest(
     df: pd.DataFrame | None = None,
     grouping_df: pd.DataFrame | str | None = None,
     weights_df: pd.DataFrame | str | None = None,
+    calendar_df: pd.DataFrame | str | None = None,
 ) -> BacktestResults:
     """Run a full cross-validated backtest.
 
@@ -143,6 +150,11 @@ def run_backtest(
     run after cross-validation.  The test fold fits transforms and the model
     from scratch on ``ds <= test_origin`` and evaluates over the next
     ``cross_validation.horizon`` periods.  There is no separate test horizon.
+
+    When the config contains ``aggregation`` and ``evaluation.aggregated``
+    blocks, forecasts are temporally aggregated to a coarser frequency
+    and metrics are evaluated at that frequency.  The ``calendar_df``
+    parameter provides the mapping from native timestamps to periods.
 
     Args:
         config_path: Path to a YAML configuration file.
@@ -154,10 +166,13 @@ def run_backtest(
         weights_df: Per-series, per-origin weights DataFrame or path to
             a parquet file.  Required when any metric has an
             ``aggregation_callable``.
+        calendar_df: Calendar DataFrame, file path, or ``None``.  Maps
+            native-frequency timestamps to coarser periods.  Required
+            when the config contains an ``aggregation`` block.
 
     Returns:
         A :class:`BacktestResults` containing CV metrics, forecasts,
-        fold metadata, and optionally test fold results.
+        fold metadata, and optionally test fold and aggregated results.
 
     Raises:
         ValueError: If *df* is ``None`` or if config arguments are invalid.
@@ -447,6 +462,43 @@ def run_backtest(
     if test_origin_typed is not None and test_horizon is not None:
         horizon_list.append((test_origin_typed, test_horizon))
 
+    # ---- temporal aggregation ----
+    aggregated: AggregatedResults | None = None
+    if backtest_config.aggregation is not None:
+        # Resolve calendar_df (same three-way pattern)
+        if isinstance(calendar_df, str):
+            calendar_df = pd.read_parquet(calendar_df)
+        elif (
+            calendar_df is None
+            and backtest_config.aggregation.calendar_source is not None
+        ):
+            calendar_df = pd.read_parquet(backtest_config.aggregation.calendar_source)
+
+        if calendar_df is None:
+            raise ValueError(
+                "calendar_df is required when an 'aggregation' config "
+                "block is present. Provide a DataFrame, a file path, "
+                "or set aggregation.calendar_source in the config."
+            )
+
+        # Build intermediate results for aggregate_backtest()
+        interim_results = BacktestResults(
+            cv=cv_results,
+            horizon=horizon_list,
+            config=raw_config,
+            git_hash=git_hash,
+            uv_lock_info=uv_lock_info,
+            run_summary=run_summary,
+            test=test_results,
+        )
+
+        aggregated = aggregate_backtest(
+            results=interim_results,
+            aggregation_config=backtest_config.aggregation,
+            evaluation_level_config=backtest_config.evaluation.aggregated,
+            calendar_df=calendar_df,
+        )
+
     return BacktestResults(
         cv=cv_results,
         horizon=horizon_list,
@@ -455,4 +507,5 @@ def run_backtest(
         uv_lock_info=uv_lock_info,
         run_summary=run_summary,
         test=test_results,
+        aggregated=aggregated,
     )
