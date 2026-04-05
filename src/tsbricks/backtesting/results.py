@@ -97,6 +97,31 @@ class TestResults:
 
 
 @dataclass(frozen=True)
+class AggregatedResults:
+    """Results from temporal aggregation of backtest forecasts.
+
+    Attributes:
+        cv_forecasts: Fold ID to aggregated forecast DataFrame with
+            columns ``unique_id``, ``{period_col}``, ``ypred``.
+        cv_metrics: Long-format metrics DataFrame at the aggregated
+            frequency.  Same schema as ``CVResults.metrics``.
+        test_forecasts: Aggregated test forecast DataFrame.  ``None``
+            when the test fold is absent.
+        test_metrics: Aggregated test metrics DataFrame.  ``None``
+            when the test fold is absent.
+        metadata: Aggregation settings for logging
+            (``timestamp_col``, ``period_col``, ``agg_func``,
+            ``calendar_source``).
+    """
+
+    cv_forecasts: dict[str, pd.DataFrame]
+    cv_metrics: pd.DataFrame
+    test_forecasts: pd.DataFrame | None = None
+    test_metrics: pd.DataFrame | None = None
+    metadata: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class BacktestResults:
     """Top-level results containing CV results, test results, and metadata.
 
@@ -118,6 +143,8 @@ class BacktestResults:
             See ``spec_backtest_warnings_run_summary.md`` §3.
         test: Test fold results. ``None`` when the test fold is
             disabled.
+        aggregated: Temporally aggregated results. ``None`` when no
+            aggregation is configured.
         extra: Escape-hatch dict for user-defined data.
     """
 
@@ -133,6 +160,9 @@ class BacktestResults:
 
     # Test results (None when test fold disabled)
     test: TestResults | None = None
+
+    # Aggregated results (None when no aggregation config or no calendar_df)
+    aggregated: AggregatedResults | None = None
 
     # Escape hatch
     extra: dict | None = None
