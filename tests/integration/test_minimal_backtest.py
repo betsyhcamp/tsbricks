@@ -648,3 +648,93 @@ def test_uniform_horizon_with_test_override() -> None:
     ]
 
     assert results.test is not None
+
+
+# ---- evaluation.native=None (aggregated-only scenario) ----
+
+
+def _aggregated_only_config() -> dict:
+    """Config with native=None, aggregated metrics, and aggregation block."""
+    return {
+        "data": {"freq": "MS"},
+        "cross_validation": {
+            "mode": "explicit",
+            "horizon": 6,
+            "forecast_origins": ["2023-01-01", "2023-06-01"],
+        },
+        "model": {
+            "callable": ("tsbricks._testing.dummy_models.forecast_only"),
+        },
+        "evaluation": {
+            "aggregated": {
+                "metrics": {
+                    "definitions": [
+                        {
+                            "name": "monthly_mae",
+                            "callable": "tsbricks.blocks.metrics.mae",
+                            "type": "simple",
+                        }
+                    ],
+                },
+            },
+        },
+        "aggregation": {
+            "timestamp_col": "ds",
+            "period_col": "fiscal_month",
+            "agg_func": "sum",
+        },
+    }
+
+
+def test_native_none_cv_metrics_empty() -> None:
+    """When evaluation.native is None, cv.metrics is an empty DataFrame."""
+    df = _synthetic_monthly_panel()
+    cfg = _aggregated_only_config()
+
+    results = run_backtest(config=cfg, df=df)
+
+    assert isinstance(results, BacktestResults)
+    assert len(results.cv.metrics) == 0
+    assert list(results.cv.metrics.columns) == [
+        "metric_name",
+        "unique_id",
+        "fold",
+        "scope",
+        "grouping_column_name",
+        "aggregation",
+        "value",
+    ]
+
+
+def test_native_none_forecasts_still_produced() -> None:
+    """When evaluation.native is None, forecasts are still produced."""
+    df = _synthetic_monthly_panel()
+    cfg = _aggregated_only_config()
+
+    results = run_backtest(config=cfg, df=df)
+
+    assert len(results.cv.forecasts_per_fold) == 2
+    for fold_id, forecast_df in results.cv.forecasts_per_fold.items():
+        assert len(forecast_df) > 0
+
+
+def test_native_none_with_test_fold() -> None:
+    """When evaluation.native is None, test fold runs with empty metrics."""
+    df = _synthetic_monthly_panel()
+    cfg = _aggregated_only_config()
+    cfg["test"] = {"test_origin": "2023-07-01", "horizon": 3}
+
+    results = run_backtest(config=cfg, df=df)
+
+    assert results.test is not None
+    assert len(results.test.metrics) == 0
+    assert list(results.test.metrics.columns) == [
+        "metric_name",
+        "unique_id",
+        "fold",
+        "scope",
+        "grouping_column_name",
+        "aggregation",
+        "value",
+    ]
+    assert len(results.test.forecasts) > 0

@@ -21,6 +21,17 @@ from tsbricks.runner import (
 )
 
 
+_METRICS_COLUMNS = [
+    "metric_name",
+    "unique_id",
+    "fold",
+    "scope",
+    "grouping_column_name",
+    "aggregation",
+    "value",
+]
+
+
 def _validate_grouping_df(
     grouping_df: pd.DataFrame | None,
     backtest_config: BacktestConfig,
@@ -168,29 +179,29 @@ def run_backtest(
     }
     df = df.rename(columns=col_map)
 
-    # ---- resolve grouping_df ----
-    if isinstance(grouping_df, str):
-        grouping_df = pd.read_parquet(grouping_df)
-    elif (
-        grouping_df is None
-        and backtest_config.evaluation.native.metrics.grouping_source is not None
-    ):
-        grouping_df = pd.read_parquet(
-            backtest_config.evaluation.native.metrics.grouping_source
-        )
+    # ---- resolve grouping_df / weights_df (native evaluation only) ----
+    if backtest_config.evaluation.native is not None:
+        if isinstance(grouping_df, str):
+            grouping_df = pd.read_parquet(grouping_df)
+        elif (
+            grouping_df is None
+            and backtest_config.evaluation.native.metrics.grouping_source is not None
+        ):
+            grouping_df = pd.read_parquet(
+                backtest_config.evaluation.native.metrics.grouping_source
+            )
 
-    _validate_grouping_df(grouping_df, backtest_config)
+        _validate_grouping_df(grouping_df, backtest_config)
 
-    # ---- resolve weights_df ----
-    if isinstance(weights_df, str):
-        weights_df = pd.read_parquet(weights_df)
-    elif (
-        weights_df is None
-        and backtest_config.evaluation.native.metrics.weights_source is not None
-    ):
-        weights_df = pd.read_parquet(
-            backtest_config.evaluation.native.metrics.weights_source
-        )
+        if isinstance(weights_df, str):
+            weights_df = pd.read_parquet(weights_df)
+        elif (
+            weights_df is None
+            and backtest_config.evaluation.native.metrics.weights_source is not None
+        ):
+            weights_df = pd.read_parquet(
+                backtest_config.evaluation.native.metrics.weights_source
+            )
 
     cv_folds, test_split = generate_folds(
         df,
@@ -208,7 +219,8 @@ def run_backtest(
 
     fold_origins = [o for o, _ in origin_horizon_list]
 
-    _validate_weights_df(weights_df, backtest_config, fold_origins)
+    if backtest_config.evaluation.native is not None:
+        _validate_weights_df(weights_df, backtest_config, fold_origins)
 
     run_summary: dict = {"warnings": [], "errors": []}
 
@@ -246,34 +258,38 @@ def run_backtest(
             ):
                 forecast_original = inverse_transforms(forecast_df, fitted_transforms)
 
-            fold_weights: dict[str, float] | None = None
-            if weights_df is not None:
-                fold_origin = fold_origins[fold_idx]
-                fold_rows = weights_df[weights_df["forecast_origin"] == fold_origin]
-                fold_weights = dict(
-                    zip(
-                        fold_rows["unique_id"],
-                        fold_rows["raw_weight"],
-                    )
-                )
-
-            stage = "metric"
-            with capture_warnings(
-                run_summary["warnings"], fold=fold_id, stage="metric"
-            ):
-                fold_metrics = evaluate_metrics(
-                    y_true=val_df,
-                    y_pred=forecast_original,
-                    y_train=train_df,
-                    metrics_config=backtest_config.evaluation.native.metrics,
-                    fold_id=fold_id,
-                    grouping_df=grouping_df,
-                    fold_weights=fold_weights,
-                    run_summary=run_summary,
-                )
-
             forecasts_per_fold[fold_id] = forecast_original
-            all_metrics.append(fold_metrics)
+
+            if backtest_config.evaluation.native is not None:
+                fold_weights: dict[str, float] | None = None
+                if weights_df is not None:
+                    fold_origin = fold_origins[fold_idx]
+                    fold_rows = weights_df[weights_df["forecast_origin"] == fold_origin]
+                    fold_weights = dict(
+                        zip(
+                            fold_rows["unique_id"],
+                            fold_rows["raw_weight"],
+                        )
+                    )
+
+                stage = "metric"
+                with capture_warnings(
+                    run_summary["warnings"],
+                    fold=fold_id,
+                    stage="metric",
+                ):
+                    fold_metrics = evaluate_metrics(
+                        y_true=val_df,
+                        y_pred=forecast_original,
+                        y_train=train_df,
+                        metrics_config=backtest_config.evaluation.native.metrics,
+                        fold_id=fold_id,
+                        grouping_df=grouping_df,
+                        fold_weights=fold_weights,
+                        run_summary=run_summary,
+                    )
+
+                all_metrics.append(fold_metrics)
 
         except Exception as exc:
             run_summary["errors"].append(
@@ -299,7 +315,10 @@ def run_backtest(
         exc.run_summary = run_summary
         raise exc
 
-    metrics = pd.concat(all_metrics, ignore_index=True)
+    if all_metrics:
+        metrics = pd.concat(all_metrics, ignore_index=True)
+    else:
+        metrics = pd.DataFrame(columns=_METRICS_COLUMNS)
 
     cv_results = CVResults(
         forecasts_per_fold=forecasts_per_fold,
@@ -356,30 +375,36 @@ def run_backtest(
             ):
                 forecast_original = inverse_transforms(forecast_df, fitted_transforms)
 
-            test_fold_weights: dict[str, float] | None = None
-            if weights_df is not None:
-                test_rows = weights_df[
-                    weights_df["forecast_origin"] == test_origin_typed
-                ]
-                test_fold_weights = dict(
-                    zip(
-                        test_rows["unique_id"],
-                        test_rows["raw_weight"],
+            test_metrics = pd.DataFrame(columns=_METRICS_COLUMNS)
+            if backtest_config.evaluation.native is not None:
+                test_fold_weights: dict[str, float] | None = None
+                if weights_df is not None:
+                    test_rows = weights_df[
+                        weights_df["forecast_origin"] == test_origin_typed
+                    ]
+                    test_fold_weights = dict(
+                        zip(
+                            test_rows["unique_id"],
+                            test_rows["raw_weight"],
+                        )
                     )
-                )
 
-            stage = "metric"
-            with capture_warnings(run_summary["warnings"], fold="test", stage="metric"):
-                test_metrics = evaluate_metrics(
-                    y_true=test_test_df,
-                    y_pred=forecast_original,
-                    y_train=test_train_df,
-                    metrics_config=backtest_config.evaluation.native.metrics,
-                    fold_id="test",
-                    grouping_df=grouping_df,
-                    fold_weights=test_fold_weights,
-                    run_summary=run_summary,
-                )
+                stage = "metric"
+                with capture_warnings(
+                    run_summary["warnings"],
+                    fold="test",
+                    stage="metric",
+                ):
+                    test_metrics = evaluate_metrics(
+                        y_true=test_test_df,
+                        y_pred=forecast_original,
+                        y_train=test_train_df,
+                        metrics_config=backtest_config.evaluation.native.metrics,
+                        fold_id="test",
+                        grouping_df=grouping_df,
+                        fold_weights=test_fold_weights,
+                        run_summary=run_summary,
+                    )
 
             test_results = TestResults(
                 forecasts=forecast_original,
