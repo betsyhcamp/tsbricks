@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from tsbricks.backtesting.schema import (
     BacktestConfig,
     CrossValidationConfig,
+    EvaluationConfig,
     ForecastOriginConfig,
     MetricDefinitionConfig,
     MetricsConfig,
@@ -64,6 +65,37 @@ def test_parse_valid_dict_metrics_section(valid_cfg: dict) -> None:
 
     assert len(cfg.evaluation.native.metrics.definitions) == 1
     assert cfg.evaluation.native.metrics.definitions[0].name == "rmse"
+
+
+# ---- EvaluationConfig validation ----
+
+
+def test_evaluation_native_valid(valid_cfg: dict) -> None:
+    """Config with evaluation.native present parses correctly."""
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.evaluation.native is not None
+    assert cfg.evaluation.aggregated is None
+
+
+def test_evaluation_both_none_raises() -> None:
+    """Evaluation with both native and aggregated None raises."""
+    with pytest.raises(ValidationError, match="at least one"):
+        EvaluationConfig()
+
+
+def test_evaluation_aggregated_raises() -> None:
+    """Setting evaluation.aggregated raises 'not yet supported'."""
+    level = {
+        "metrics": {
+            "definitions": [
+                {"name": "m", "callable": "x.y", "type": "simple"},
+            ]
+        }
+    }
+
+    with pytest.raises(ValidationError, match="not yet supported"):
+        EvaluationConfig(native=level, aggregated=level)
 
 
 # ---- defaults by config model ----
