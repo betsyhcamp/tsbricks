@@ -490,3 +490,143 @@ def test_aggregate_backtest_metadata() -> None:
     assert agg.metadata["period_col"] == "fiscal_month"
     assert agg.metadata["agg_func"] == "sum"
     assert agg.metadata["calendar_source"] is None
+
+
+# ---- fold_weights with skipped fold (regression) ----
+
+
+def test_fold_weights_correct_after_skipped_fold() -> None:
+    """Aggregated metrics use the correct origin's weights when an earlier fold is missing.
+
+    Regression test: if fold_0 failed during run_backtest() and was
+    removed from forecasts_per_fold, fold_1's weights must still be
+    looked up by fold_1's origin — not fold_0's.
+
+    Setup:
+      - 2 weeks per month, 2 months → series A MAE=4.0, series B MAE=8.0
+      - origin_0 weights: A=3.0, B=1.0 → weighted_mean = 5.0
+      - origin_1 weights: A=1.0, B=3.0 → weighted_mean = 7.0
+      - fold_0 is missing; only fold_1 survives
+      - Assert the global metric equals 7.0 (origin_1 weights), not 5.0
+    """
+    weeks = _weekly_dates("2023-01-02", 4)
+    train_weeks = _weekly_dates("2022-10-03", 8)
+    all_weeks = train_weeks + weeks
+    month_map = {
+        weeks[0]: "2023-01",
+        weeks[1]: "2023-01",
+        weeks[2]: "2023-02",
+        weeks[3]: "2023-02",
+    }
+    full_calendar = _make_calendar(
+        all_weeks,
+        {
+            **{w: w.strftime("%Y-%m") for w in train_weeks},
+            **month_map,
+        },
+    )
+
+    # Series A predicts 12, series B predicts 14; both have actuals 10.
+    # After sum aggregation (2 weeks/month):
+    #   A: MAE = |20 - 24| = 4.0 per month → mean = 4.0
+    #   B: MAE = |20 - 28| = 8.0 per month → mean = 8.0
+    forecast_rows = []
+    val_rows = []
+    for ds in weeks:
+        forecast_rows.append({"unique_id": "A", "ds": ds, "ypred": 12.0})
+        forecast_rows.append({"unique_id": "B", "ds": ds, "ypred": 14.0})
+        val_rows.append({"unique_id": "A", "ds": ds, "y": 10.0})
+        val_rows.append({"unique_id": "B", "ds": ds, "y": 10.0})
+    forecast_df = pd.DataFrame(forecast_rows)
+    val_df = pd.DataFrame(val_rows)
+    train_df = _make_panel(["A", "B"], train_weeks, 8.0)
+
+    # Simulate: fold_0 failed, only fold_1 survived
+    origin_0 = pd.Timestamp("2023-01-01")
+    origin_1 = pd.Timestamp("2023-04-01")
+
+    cv = CVResults(
+        forecasts_per_fold={"fold_1": forecast_df},
+        metrics=pd.DataFrame(),
+        fold_origins=[origin_0, origin_1],
+        fold_id_to_origin={
+            "fold_0": origin_0,
+            "fold_1": origin_1,
+        },
+        train_val_splits_per_fold={
+            "fold_1": {"train": train_df, "val": val_df},
+        },
+    )
+
+    results = BacktestResults(
+        cv=cv,
+        horizon=[(origin_0, 4), (origin_1, 4)],
+        config={},
+    )
+
+    # Asymmetric weights: origin_0 and origin_1 produce
+    # different weighted_mean values
+    weights_df = pd.DataFrame(
+        [
+            {
+                "unique_id": "A",
+                "forecast_origin": origin_0,
+                "raw_weight": 3.0,
+            },
+            {
+                "unique_id": "B",
+                "forecast_origin": origin_0,
+                "raw_weight": 1.0,
+            },
+            {
+                "unique_id": "A",
+                "forecast_origin": origin_1,
+                "raw_weight": 1.0,
+            },
+            {
+                "unique_id": "B",
+                "forecast_origin": origin_1,
+                "raw_weight": 3.0,
+            },
+        ]
+    )
+
+    eval_level = EvaluationLevelConfig(
+        metrics={
+            "definitions": [
+                {
+                    "name": "global_mae",
+                    "callable": "tsbricks.blocks.metrics.mae",
+                    "type": "simple",
+                    "scope": "global",
+                    "aggregation_callable": (
+                        "tsbricks.backtesting.aggregations.weighted_mean"
+                    ),
+                }
+            ]
+        }
+    )
+
+    agg = aggregate_backtest(
+        results=results,
+        aggregation_config=_default_agg_config(),
+        evaluation_level_config=eval_level,
+        calendar_df=full_calendar,
+        weights_df=weights_df,
+    )
+
+    assert set(agg.cv_forecasts.keys()) == {"fold_1"}
+
+    # Extract the global metric value
+    global_rows = agg.cv_metrics[
+        (agg.cv_metrics["metric_name"] == "global_mae")
+        & (agg.cv_metrics["scope"] == "global")
+    ]
+    assert len(global_rows) == 1
+    global_value = global_rows["value"].iloc[0]
+
+    # With origin_1 weights (A=1, B=3):
+    #   weighted_mean = (1*4 + 3*8) / (1+3) = 28/4 = 7.0
+    # With origin_0 weights (A=3, B=1) it would be:
+    #   weighted_mean = (3*4 + 1*8) / (3+1) = 20/4 = 5.0
+    assert global_value == pytest.approx(7.0)
