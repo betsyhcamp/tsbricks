@@ -5,7 +5,11 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from tsbricks.backtesting import BacktestResults, run_backtest
+from tsbricks.backtesting import (
+    AggregatedResults,
+    BacktestResults,
+    run_backtest,
+)
 
 
 def _synthetic_monthly_panel() -> pd.DataFrame:
@@ -648,3 +652,279 @@ def test_uniform_horizon_with_test_override() -> None:
     ]
 
     assert results.test is not None
+
+
+# ---- evaluation.native=None (aggregated-only scenario) ----
+
+
+def _aggregated_only_config() -> dict:
+    """Config with native=None, aggregated metrics, and aggregation block."""
+    return {
+        "data": {"freq": "MS"},
+        "cross_validation": {
+            "mode": "explicit",
+            "horizon": 6,
+            "forecast_origins": ["2023-01-01", "2023-06-01"],
+        },
+        "model": {
+            "callable": ("tsbricks._testing.dummy_models.forecast_only"),
+        },
+        "evaluation": {
+            "aggregated": {
+                "metrics": {
+                    "definitions": [
+                        {
+                            "name": "quarterly_mae",
+                            "callable": "tsbricks.blocks.metrics.mae",
+                            "type": "simple",
+                        }
+                    ],
+                },
+            },
+        },
+        "aggregation": {
+            "timestamp_col": "ds",
+            "period_col": "fiscal_quarter",
+            "agg_func": "sum",
+        },
+    }
+
+
+def test_native_none_cv_metrics_empty() -> None:
+    """When evaluation.native is None, cv.metrics is an empty DataFrame."""
+    df = _synthetic_monthly_panel()
+    cfg = _aggregated_only_config()
+    calendar = _monthly_to_quarter_calendar()
+
+    results = run_backtest(config=cfg, df=df, calendar_df=calendar)
+
+    assert isinstance(results, BacktestResults)
+    assert len(results.cv.metrics) == 0
+    assert list(results.cv.metrics.columns) == [
+        "metric_name",
+        "unique_id",
+        "fold",
+        "scope",
+        "grouping_column_name",
+        "aggregation",
+        "value",
+    ]
+
+
+def test_native_none_forecasts_still_produced() -> None:
+    """When evaluation.native is None, forecasts are still produced."""
+    df = _synthetic_monthly_panel()
+    cfg = _aggregated_only_config()
+    calendar = _monthly_to_quarter_calendar()
+
+    results = run_backtest(config=cfg, df=df, calendar_df=calendar)
+
+    assert len(results.cv.forecasts_per_fold) == 2
+    for forecast_df in results.cv.forecasts_per_fold.values():
+        assert len(forecast_df) > 0
+
+
+def test_native_none_with_test_fold() -> None:
+    """When evaluation.native is None, test fold runs with empty metrics."""
+    df = _synthetic_monthly_panel()
+    cfg = _aggregated_only_config()
+    cfg["test"] = {"test_origin": "2023-07-01", "horizon": 3}
+    calendar = _monthly_to_quarter_calendar()
+
+    results = run_backtest(config=cfg, df=df, calendar_df=calendar)
+
+    assert results.test is not None
+    assert len(results.test.metrics) == 0
+    assert list(results.test.metrics.columns) == [
+        "metric_name",
+        "unique_id",
+        "fold",
+        "scope",
+        "grouping_column_name",
+        "aggregation",
+        "value",
+    ]
+    assert len(results.test.forecasts) > 0
+
+
+# ---- temporal aggregation integration (Phase 5) ----
+
+
+def _monthly_to_quarter_calendar() -> pd.DataFrame:
+    """Calendar mapping monthly timestamps to fiscal quarters.
+
+    Covers 2022-01 through 2023-12 (same range as _synthetic_monthly_panel).
+    """
+    dates = pd.date_range("2022-01-01", periods=24, freq="MS")
+    quarters = []
+    for d in dates:
+        q = (d.month - 1) // 3 + 1
+        quarters.append(f"{d.year}-Q{q}")
+    return pd.DataFrame({"ds": dates, "fiscal_quarter": quarters})
+
+
+def _both_native_and_aggregated_config() -> dict:
+    """Config with both native and aggregated evaluation."""
+    return {
+        "data": {"freq": "MS"},
+        "cross_validation": {
+            "mode": "explicit",
+            "horizon": 6,
+            "forecast_origins": ["2023-01-01", "2023-06-01"],
+        },
+        "model": {
+            "callable": ("tsbricks._testing.dummy_models.forecast_only"),
+        },
+        "evaluation": {
+            "native": {
+                "metrics": {
+                    "definitions": [
+                        {
+                            "name": "rmse",
+                            "callable": "tsbricks.blocks.metrics.rmse",
+                            "type": "simple",
+                        }
+                    ],
+                },
+            },
+            "aggregated": {
+                "metrics": {
+                    "definitions": [
+                        {
+                            "name": "quarterly_mae",
+                            "callable": "tsbricks.blocks.metrics.mae",
+                            "type": "simple",
+                        }
+                    ],
+                },
+            },
+        },
+        "aggregation": {
+            "timestamp_col": "ds",
+            "period_col": "fiscal_quarter",
+            "agg_func": "sum",
+        },
+    }
+
+
+def _aggregated_only_with_quarter_config() -> dict:
+    """Config with only aggregated evaluation (native=None)."""
+    return {
+        "data": {"freq": "MS"},
+        "cross_validation": {
+            "mode": "explicit",
+            "horizon": 6,
+            "forecast_origins": ["2023-01-01", "2023-06-01"],
+        },
+        "model": {
+            "callable": ("tsbricks._testing.dummy_models.forecast_only"),
+        },
+        "evaluation": {
+            "aggregated": {
+                "metrics": {
+                    "definitions": [
+                        {
+                            "name": "quarterly_mae",
+                            "callable": "tsbricks.blocks.metrics.mae",
+                            "type": "simple",
+                        }
+                    ],
+                },
+            },
+        },
+        "aggregation": {
+            "timestamp_col": "ds",
+            "period_col": "fiscal_quarter",
+            "agg_func": "sum",
+        },
+    }
+
+
+def test_weekly_only_aggregated_is_none() -> None:
+    """Scenario 1: No aggregation config -> aggregated is None."""
+    df = _synthetic_monthly_panel()
+    cfg = _minimal_config()
+
+    results = run_backtest(config=cfg, df=df)
+
+    assert results.aggregated is None
+
+
+def test_both_native_and_aggregated() -> None:
+    """Scenario 3: Both native and aggregated metrics populated."""
+    df = _synthetic_monthly_panel()
+    cfg = _both_native_and_aggregated_config()
+    calendar = _monthly_to_quarter_calendar()
+
+    results = run_backtest(config=cfg, df=df, calendar_df=calendar)
+
+    # Native metrics populated
+    assert len(results.cv.metrics) > 0
+    assert "rmse" in results.cv.metrics["metric_name"].values
+
+    # Aggregated results populated
+    assert results.aggregated is not None
+    assert isinstance(results.aggregated, AggregatedResults)
+    assert len(results.aggregated.cv_metrics) > 0
+    assert "quarterly_mae" in results.aggregated.cv_metrics["metric_name"].values
+
+    # Aggregated forecasts have period_col column
+    for agg_df in results.aggregated.cv_forecasts.values():
+        assert "fiscal_quarter" in agg_df.columns
+        assert "ypred" in agg_df.columns
+
+
+def test_aggregated_only_with_calendar() -> None:
+    """Scenario 2: Aggregated only — native metrics empty, aggregated populated."""
+    df = _synthetic_monthly_panel()
+    cfg = _aggregated_only_with_quarter_config()
+    calendar = _monthly_to_quarter_calendar()
+
+    results = run_backtest(config=cfg, df=df, calendar_df=calendar)
+
+    # Native metrics empty
+    assert len(results.cv.metrics) == 0
+
+    # Aggregated results populated
+    assert results.aggregated is not None
+    assert len(results.aggregated.cv_metrics) > 0
+    assert "quarterly_mae" in results.aggregated.cv_metrics["metric_name"].values
+
+
+def test_aggregation_missing_calendar_raises() -> None:
+    """Aggregation config without calendar_df raises ValueError."""
+    df = _synthetic_monthly_panel()
+    cfg = _both_native_and_aggregated_config()
+
+    with pytest.raises(ValueError, match="calendar_df is required"):
+        run_backtest(config=cfg, df=df)
+
+
+def test_aggregated_with_test_fold() -> None:
+    """Aggregated results include test fold when present."""
+    df = _synthetic_monthly_panel()
+    cfg = _both_native_and_aggregated_config()
+    cfg["test"] = {"test_origin": "2023-07-01", "horizon": 3}
+    calendar = _monthly_to_quarter_calendar()
+
+    results = run_backtest(config=cfg, df=df, calendar_df=calendar)
+
+    assert results.aggregated is not None
+    assert results.aggregated.test_forecasts is not None
+    assert results.aggregated.test_metrics is not None
+    assert len(results.aggregated.test_metrics) > 0
+
+
+def test_aggregated_metadata_populated() -> None:
+    """Aggregated metadata captures aggregation settings."""
+    df = _synthetic_monthly_panel()
+    cfg = _both_native_and_aggregated_config()
+    calendar = _monthly_to_quarter_calendar()
+
+    results = run_backtest(config=cfg, df=df, calendar_df=calendar)
+
+    assert results.aggregated is not None
+    meta = results.aggregated.metadata
+    assert meta["timestamp_col"] == "ds"
+    assert meta["period_col"] == "fiscal_quarter"
+    assert meta["agg_func"] == "sum"

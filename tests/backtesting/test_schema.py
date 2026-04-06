@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from tsbricks.backtesting.schema import (
+    AggregationConfig,
     BacktestConfig,
     CrossValidationConfig,
     EvaluationConfig,
@@ -84,8 +85,8 @@ def test_evaluation_both_none_raises() -> None:
         EvaluationConfig()
 
 
-def test_evaluation_aggregated_raises() -> None:
-    """Setting evaluation.aggregated raises 'not yet supported'."""
+def test_evaluation_aggregated_accepted() -> None:
+    """Setting both native and aggregated on EvaluationConfig is valid."""
     level = {
         "metrics": {
             "definitions": [
@@ -94,8 +95,147 @@ def test_evaluation_aggregated_raises() -> None:
         }
     }
 
-    with pytest.raises(ValidationError, match="not yet supported"):
-        EvaluationConfig(native=level, aggregated=level)
+    cfg = EvaluationConfig(native=level, aggregated=level)
+
+    assert cfg.native is not None
+    assert cfg.aggregated is not None
+
+
+def test_evaluation_aggregated_only_accepted() -> None:
+    """Setting only aggregated (native=None) on EvaluationConfig is valid."""
+    level = {
+        "metrics": {
+            "definitions": [
+                {"name": "m", "callable": "x.y", "type": "simple"},
+            ]
+        }
+    }
+
+    cfg = EvaluationConfig(aggregated=level)
+
+    assert cfg.native is None
+    assert cfg.aggregated is not None
+
+
+# ---- AggregationConfig validation ----
+
+
+def test_aggregation_config_valid() -> None:
+    """Valid AggregationConfig with all fields parses correctly."""
+    cfg = AggregationConfig(
+        calendar_source="path/to/calendar.parquet",
+        timestamp_col="ds",
+        period_col="fiscal_month",
+        agg_func="sum",
+    )
+
+    assert cfg.calendar_source == "path/to/calendar.parquet"
+    assert cfg.timestamp_col == "ds"
+    assert cfg.period_col == "fiscal_month"
+    assert cfg.agg_func == "sum"
+
+
+def test_aggregation_config_defaults() -> None:
+    """AggregationConfig applies correct defaults."""
+    cfg = AggregationConfig(
+        timestamp_col="ds",
+        period_col="fiscal_month",
+    )
+
+    assert cfg.calendar_source is None
+    assert cfg.agg_func == "sum"
+
+
+def test_aggregation_config_invalid_agg_func_raises() -> None:
+    """Invalid agg_func value raises ValidationError."""
+    with pytest.raises(ValidationError, match="agg_func"):
+        AggregationConfig(
+            timestamp_col="ds",
+            period_col="fiscal_month",
+            agg_func="mean",
+        )
+
+
+def test_aggregation_config_extra_field_rejected() -> None:
+    """Unknown fields on AggregationConfig are rejected."""
+    with pytest.raises(ValidationError):
+        AggregationConfig(
+            timestamp_col="ds",
+            period_col="fiscal_month",
+            unknown_field="bad",
+        )
+
+
+# ---- Aggregation / evaluation cross-field validators ----
+
+
+_EVAL_LEVEL = {
+    "metrics": {
+        "definitions": [
+            {
+                "name": "m",
+                "callable": "x.y",
+                "type": "simple",
+            },
+        ]
+    }
+}
+
+_AGG_BLOCK = {
+    "calendar_source": "cal.parquet",
+    "timestamp_col": "ds",
+    "period_col": "fiscal_month",
+    "agg_func": "sum",
+}
+
+
+def test_aggregation_and_aggregated_eval_both_present(
+    valid_cfg: dict,
+) -> None:
+    """Config with both aggregation and evaluation.aggregated parses."""
+    valid_cfg["aggregation"] = _AGG_BLOCK
+    valid_cfg["evaluation"]["aggregated"] = _EVAL_LEVEL
+
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.aggregation is not None
+    assert cfg.evaluation.aggregated is not None
+
+
+def test_aggregated_eval_without_aggregation_raises(
+    valid_cfg: dict,
+) -> None:
+    """evaluation.aggregated without aggregation block raises."""
+    valid_cfg["evaluation"]["aggregated"] = _EVAL_LEVEL
+
+    with pytest.raises(
+        ValidationError,
+        match="evaluation.aggregated requires.*aggregation",
+    ):
+        parse_config(config=valid_cfg)
+
+
+def test_aggregation_without_aggregated_eval_raises(
+    valid_cfg: dict,
+) -> None:
+    """aggregation block without evaluation.aggregated raises."""
+    valid_cfg["aggregation"] = _AGG_BLOCK
+
+    with pytest.raises(
+        ValidationError,
+        match="aggregation.*requires evaluation.aggregated",
+    ):
+        parse_config(config=valid_cfg)
+
+
+def test_no_aggregation_no_aggregated_eval_ok(
+    valid_cfg: dict,
+) -> None:
+    """Config without aggregation or evaluation.aggregated is valid."""
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.aggregation is None
+    assert cfg.evaluation.aggregated is None
 
 
 # ---- defaults by config model ----
