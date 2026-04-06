@@ -22,6 +22,10 @@ class CVResults:
             Contains raw per-fold, per-series values.
         fold_origins: Chronologically sorted forecast origins (timestamps
             for datetime ds, integers for integer ds), one per fold.
+        fold_id_to_origin: Mapping from fold ID (e.g., ``"fold_0"``) to
+            its forecast origin.  Provides an explicit lookup so
+            consumers do not need to rely on positional alignment
+            between ``fold_origins`` and ``forecasts_per_fold``.
         train_val_splits_per_fold: Fold ID to ``{"train": df, "val": df}``
             on the original scale.
         fitted_values: Fold ID to in-sample fitted-value DataFrame
@@ -41,6 +45,7 @@ class CVResults:
     forecasts_per_fold: dict[str, pd.DataFrame]
     metrics: pd.DataFrame
     fold_origins: list[pd.Timestamp] | list[int]
+    fold_id_to_origin: dict[str, pd.Timestamp | int]
     train_val_splits_per_fold: dict[str, dict[str, pd.DataFrame]]
 
     # Present depending on model/config

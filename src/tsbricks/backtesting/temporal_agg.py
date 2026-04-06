@@ -224,6 +224,13 @@ def aggregate_backtest(
         agg_true_eval = agg_true.rename(columns={period_col: "ds"})
         agg_train_eval = agg_train.rename(columns={period_col: "ds"})
 
+        # Build per-fold weight map (same pattern as engine.py)
+        fold_weights: dict[str, float] | None = None
+        if weights_df is not None:
+            fold_origin = results.cv.fold_id_to_origin[fold_id]
+            fold_rows = weights_df[weights_df["forecast_origin"] == fold_origin]
+            fold_weights = dict(zip(fold_rows["unique_id"], fold_rows["raw_weight"]))
+
         fold_metrics = evaluate_metrics(
             y_true=agg_true_eval,
             y_pred=agg_pred_eval,
@@ -231,6 +238,7 @@ def aggregate_backtest(
             metrics_config=evaluation_level_config.metrics,
             fold_id=fold_id,
             grouping_df=grouping_df,
+            fold_weights=fold_weights,
         )
         all_agg_metrics.append(fold_metrics)
 
@@ -281,6 +289,15 @@ def aggregate_backtest(
         agg_test_true_eval = agg_test_true.rename(columns={period_col: "ds"})
         agg_test_train_eval = agg_test_train.rename(columns={period_col: "ds"})
 
+        # Build test fold weight map
+        test_fold_weights: dict[str, float] | None = None
+        if weights_df is not None:
+            test_origin = results.test.test_origin
+            test_rows = weights_df[weights_df["forecast_origin"] == test_origin]
+            test_fold_weights = dict(
+                zip(test_rows["unique_id"], test_rows["raw_weight"])
+            )
+
         agg_test_metrics = evaluate_metrics(
             y_true=agg_test_true_eval,
             y_pred=agg_test_pred_eval,
@@ -288,6 +305,7 @@ def aggregate_backtest(
             metrics_config=evaluation_level_config.metrics,
             fold_id="test",
             grouping_df=grouping_df,
+            fold_weights=test_fold_weights,
         )
 
     metadata = {

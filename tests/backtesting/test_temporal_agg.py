@@ -81,19 +81,28 @@ def _make_backtest_results(
     if fold_ids is None:
         fold_ids = ["fold_0"]
 
+    # One origin per fold, spaced 3 months apart
+    base_origin = pd.Timestamp("2023-01-01")
+    fold_origins = [
+        base_origin + pd.DateOffset(months=3 * i) for i in range(len(fold_ids))
+    ]
+
     forecasts_per_fold = {}
     train_val_splits = {}
-    for fid in fold_ids:
+    fold_id_to_origin = {}
+    for i, fid in enumerate(fold_ids):
         forecasts_per_fold[fid] = _make_forecast(unique_ids, val_dates, y_pred)
         train_val_splits[fid] = {
             "train": _make_panel(unique_ids, train_dates, y_train),
             "val": _make_panel(unique_ids, val_dates, y_val),
         }
+        fold_id_to_origin[fid] = fold_origins[i]
 
     cv = CVResults(
         forecasts_per_fold=forecasts_per_fold,
         metrics=pd.DataFrame(),
-        fold_origins=[pd.Timestamp("2023-01-01")],
+        fold_origins=fold_origins,
+        fold_id_to_origin=fold_id_to_origin,
         train_val_splits_per_fold=train_val_splits,
     )
 

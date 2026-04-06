@@ -335,10 +335,16 @@ def run_backtest(
     else:
         metrics = pd.DataFrame(columns=_METRICS_COLUMNS)
 
+    fold_id_to_origin: dict[str, pd.Timestamp | int] = {
+        fold_id: fold_origins[fold_idx]
+        for fold_idx, fold_id in enumerate(cv_folds.keys())
+    }
+
     cv_results = CVResults(
         forecasts_per_fold=forecasts_per_fold,
         metrics=metrics,
         fold_origins=fold_origins,
+        fold_id_to_origin=fold_id_to_origin,
         train_val_splits_per_fold=cv_folds,
     )
 
