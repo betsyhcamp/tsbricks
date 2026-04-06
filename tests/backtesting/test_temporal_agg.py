@@ -443,6 +443,32 @@ def test_calendar_missing_timestamps_raises() -> None:
         )
 
 
+def test_calendar_duplicate_timestamps_raises() -> None:
+    """calendar_df with duplicate timestamps raises ValueError."""
+    weeks = _weekly_dates("2023-01-02", 4)
+    train_weeks = _weekly_dates("2022-10-03", 8)
+    all_weeks = train_weeks + weeks
+
+    # Create a calendar with a duplicate timestamp
+    good_calendar = _make_calendar(all_weeks)
+    dup_row = good_calendar.iloc[[0]]
+    bad_calendar = pd.concat([good_calendar, dup_row], ignore_index=True)
+
+    results = _make_backtest_results(
+        train_dates=train_weeks,
+        val_dates=weeks,
+        unique_ids=["A"],
+    )
+
+    with pytest.raises(ValueError, match="duplicate timestamps"):
+        aggregate_backtest(
+            results=results,
+            aggregation_config=_default_agg_config(),
+            evaluation_level_config=_default_eval_level(),
+            calendar_df=bad_calendar,
+        )
+
+
 def test_calendar_df_none_no_source_raises() -> None:
     """calendar_df=None with no calendar_source raises ValueError."""
     weeks = _weekly_dates("2023-01-02", 4)

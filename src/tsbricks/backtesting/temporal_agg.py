@@ -38,10 +38,11 @@ def _validate_calendar_df(
     calendar_df: pd.DataFrame,
     aggregation_config: AggregationConfig,
 ) -> None:
-    """Validate that calendar_df has the required columns.
+    """Validate that calendar_df has the required columns and unique timestamps.
 
     Raises:
-        ValueError: If required columns are missing.
+        ValueError: If required columns are missing or timestamp_col
+            contains duplicate values.
     """
     required = {aggregation_config.timestamp_col, aggregation_config.period_col}
     missing = required - set(calendar_df.columns)
@@ -50,6 +51,16 @@ def _validate_calendar_df(
             f"calendar_df is missing required columns: {sorted(missing)}. "
             f"Expected timestamp_col='{aggregation_config.timestamp_col}' "
             f"and period_col='{aggregation_config.period_col}'."
+        )
+
+    ts_col = aggregation_config.timestamp_col
+    duplicates = calendar_df[ts_col][calendar_df[ts_col].duplicated()]
+    if len(duplicates) > 0:
+        raise ValueError(
+            f"calendar_df contains duplicate timestamps in "
+            f"'{ts_col}': {sorted(str(v) for v in duplicates.unique())}. "
+            f"Each native-frequency timestamp must map to exactly "
+            f"one period."
         )
 
 
