@@ -488,8 +488,8 @@ def test_mixed_scope_identifiers():
 
 # ---- global scope ----
 
-UNWEIGHTED_MEAN = "tsbricks.backtesting.aggregations.unweighted_mean"
-WEIGHTED_MEAN = "tsbricks.backtesting.aggregations.weighted_mean"
+UNWEIGHTED_MEAN = "tsbricks.backtesting.metric_agg.unweighted_mean"
+WEIGHTED_MEAN = "tsbricks.backtesting.metric_agg.weighted_mean"
 
 
 def _three_series_data():
@@ -750,7 +750,7 @@ def test_group_two_stage_requires_fold_weights():
 
 # ---- global scope: context-aware and aggregation_params ----
 
-SCALED_MEAN = "tsbricks.backtesting.aggregations.scaled_mean"
+SCALED_MEAN = "tsbricks.backtesting.metric_agg.scaled_mean"
 
 
 def test_global_scope_context_aware_metric():

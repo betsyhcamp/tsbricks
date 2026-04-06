@@ -626,7 +626,7 @@ def test_fold_weights_correct_after_skipped_fold() -> None:
                     "type": "simple",
                     "scope": "global",
                     "aggregation_callable": (
-                        "tsbricks.backtesting.aggregations.weighted_mean"
+                        "tsbricks.backtesting.metric_agg.weighted_mean"
                     ),
                 }
             ]
