@@ -10,8 +10,14 @@ import pandas as pd
 from tsbricks.blocks.metadata import get_git_hash, get_uv_lock_info
 from tsbricks.backtesting.cross_validation import generate_folds
 from tsbricks.backtesting.evaluation import evaluate_metrics
-from tsbricks.backtesting.results import BacktestResults, CVResults, TestResults
+from tsbricks.backtesting.results import (
+    AggregatedResults,
+    BacktestResults,
+    CVResults,
+    TestResults,
+)
 from tsbricks.backtesting.schema import BacktestConfig, parse_config
+from tsbricks.backtesting.temporal_agg import aggregate_backtest
 from tsbricks.runner import (
     apply_transforms,
     capture_warnings,
@@ -19,6 +25,17 @@ from tsbricks.runner import (
     inverse_transforms,
     invoke_model,
 )
+
+
+_METRICS_COLUMNS = [
+    "metric_name",
+    "unique_id",
+    "fold",
+    "scope",
+    "grouping_column_name",
+    "aggregation",
+    "value",
+]
 
 
 def _validate_grouping_df(
@@ -125,6 +142,7 @@ def run_backtest(
     df: pd.DataFrame | None = None,
     grouping_df: pd.DataFrame | str | None = None,
     weights_df: pd.DataFrame | str | None = None,
+    calendar_df: pd.DataFrame | str | None = None,
 ) -> BacktestResults:
     """Run a full cross-validated backtest.
 
@@ -132,6 +150,11 @@ def run_backtest(
     run after cross-validation.  The test fold fits transforms and the model
     from scratch on ``ds <= test_origin`` and evaluates over the next
     ``cross_validation.horizon`` periods.  There is no separate test horizon.
+
+    When the config contains ``aggregation`` and ``evaluation.aggregated``
+    blocks, forecasts are temporally aggregated to a coarser frequency
+    and metrics are evaluated at that frequency.  The ``calendar_df``
+    parameter provides the mapping from native timestamps to periods.
 
     Args:
         config_path: Path to a YAML configuration file.
@@ -143,10 +166,13 @@ def run_backtest(
         weights_df: Per-series, per-origin weights DataFrame or path to
             a parquet file.  Required when any metric has an
             ``aggregation_callable``.
+        calendar_df: Calendar DataFrame, file path, or ``None``.  Maps
+            native-frequency timestamps to coarser periods.  Required
+            when the config contains an ``aggregation`` block.
 
     Returns:
         A :class:`BacktestResults` containing CV metrics, forecasts,
-        fold metadata, and optionally test fold results.
+        fold metadata, and optionally test fold and aggregated results.
 
     Raises:
         ValueError: If *df* is ``None`` or if config arguments are invalid.
@@ -168,29 +194,29 @@ def run_backtest(
     }
     df = df.rename(columns=col_map)
 
-    # ---- resolve grouping_df ----
-    if isinstance(grouping_df, str):
-        grouping_df = pd.read_parquet(grouping_df)
-    elif (
-        grouping_df is None
-        and backtest_config.evaluation.native.metrics.grouping_source is not None
-    ):
-        grouping_df = pd.read_parquet(
-            backtest_config.evaluation.native.metrics.grouping_source
-        )
+    # ---- resolve grouping_df / weights_df (native evaluation only) ----
+    if backtest_config.evaluation.native is not None:
+        if isinstance(grouping_df, str):
+            grouping_df = pd.read_parquet(grouping_df)
+        elif (
+            grouping_df is None
+            and backtest_config.evaluation.native.metrics.grouping_source is not None
+        ):
+            grouping_df = pd.read_parquet(
+                backtest_config.evaluation.native.metrics.grouping_source
+            )
 
-    _validate_grouping_df(grouping_df, backtest_config)
+        _validate_grouping_df(grouping_df, backtest_config)
 
-    # ---- resolve weights_df ----
-    if isinstance(weights_df, str):
-        weights_df = pd.read_parquet(weights_df)
-    elif (
-        weights_df is None
-        and backtest_config.evaluation.native.metrics.weights_source is not None
-    ):
-        weights_df = pd.read_parquet(
-            backtest_config.evaluation.native.metrics.weights_source
-        )
+        if isinstance(weights_df, str):
+            weights_df = pd.read_parquet(weights_df)
+        elif (
+            weights_df is None
+            and backtest_config.evaluation.native.metrics.weights_source is not None
+        ):
+            weights_df = pd.read_parquet(
+                backtest_config.evaluation.native.metrics.weights_source
+            )
 
     cv_folds, test_split = generate_folds(
         df,
@@ -208,7 +234,8 @@ def run_backtest(
 
     fold_origins = [o for o, _ in origin_horizon_list]
 
-    _validate_weights_df(weights_df, backtest_config, fold_origins)
+    if backtest_config.evaluation.native is not None:
+        _validate_weights_df(weights_df, backtest_config, fold_origins)
 
     run_summary: dict = {"warnings": [], "errors": []}
 
@@ -246,34 +273,38 @@ def run_backtest(
             ):
                 forecast_original = inverse_transforms(forecast_df, fitted_transforms)
 
-            fold_weights: dict[str, float] | None = None
-            if weights_df is not None:
-                fold_origin = fold_origins[fold_idx]
-                fold_rows = weights_df[weights_df["forecast_origin"] == fold_origin]
-                fold_weights = dict(
-                    zip(
-                        fold_rows["unique_id"],
-                        fold_rows["raw_weight"],
-                    )
-                )
-
-            stage = "metric"
-            with capture_warnings(
-                run_summary["warnings"], fold=fold_id, stage="metric"
-            ):
-                fold_metrics = evaluate_metrics(
-                    y_true=val_df,
-                    y_pred=forecast_original,
-                    y_train=train_df,
-                    metrics_config=backtest_config.evaluation.native.metrics,
-                    fold_id=fold_id,
-                    grouping_df=grouping_df,
-                    fold_weights=fold_weights,
-                    run_summary=run_summary,
-                )
-
             forecasts_per_fold[fold_id] = forecast_original
-            all_metrics.append(fold_metrics)
+
+            if backtest_config.evaluation.native is not None:
+                fold_weights: dict[str, float] | None = None
+                if weights_df is not None:
+                    fold_origin = fold_origins[fold_idx]
+                    fold_rows = weights_df[weights_df["forecast_origin"] == fold_origin]
+                    fold_weights = dict(
+                        zip(
+                            fold_rows["unique_id"],
+                            fold_rows["raw_weight"],
+                        )
+                    )
+
+                stage = "metric"
+                with capture_warnings(
+                    run_summary["warnings"],
+                    fold=fold_id,
+                    stage="metric",
+                ):
+                    fold_metrics = evaluate_metrics(
+                        y_true=val_df,
+                        y_pred=forecast_original,
+                        y_train=train_df,
+                        metrics_config=backtest_config.evaluation.native.metrics,
+                        fold_id=fold_id,
+                        grouping_df=grouping_df,
+                        fold_weights=fold_weights,
+                        run_summary=run_summary,
+                    )
+
+                all_metrics.append(fold_metrics)
 
         except Exception as exc:
             run_summary["errors"].append(
@@ -299,12 +330,21 @@ def run_backtest(
         exc.run_summary = run_summary
         raise exc
 
-    metrics = pd.concat(all_metrics, ignore_index=True)
+    if all_metrics:
+        metrics = pd.concat(all_metrics, ignore_index=True)
+    else:
+        metrics = pd.DataFrame(columns=_METRICS_COLUMNS)
+
+    fold_id_to_origin: dict[str, pd.Timestamp | int] = {
+        fold_id: fold_origins[fold_idx]
+        for fold_idx, fold_id in enumerate(cv_folds.keys())
+    }
 
     cv_results = CVResults(
         forecasts_per_fold=forecasts_per_fold,
         metrics=metrics,
         fold_origins=fold_origins,
+        fold_id_to_origin=fold_id_to_origin,
         train_val_splits_per_fold=cv_folds,
     )
 
@@ -356,30 +396,36 @@ def run_backtest(
             ):
                 forecast_original = inverse_transforms(forecast_df, fitted_transforms)
 
-            test_fold_weights: dict[str, float] | None = None
-            if weights_df is not None:
-                test_rows = weights_df[
-                    weights_df["forecast_origin"] == test_origin_typed
-                ]
-                test_fold_weights = dict(
-                    zip(
-                        test_rows["unique_id"],
-                        test_rows["raw_weight"],
+            test_metrics = pd.DataFrame(columns=_METRICS_COLUMNS)
+            if backtest_config.evaluation.native is not None:
+                test_fold_weights: dict[str, float] | None = None
+                if weights_df is not None:
+                    test_rows = weights_df[
+                        weights_df["forecast_origin"] == test_origin_typed
+                    ]
+                    test_fold_weights = dict(
+                        zip(
+                            test_rows["unique_id"],
+                            test_rows["raw_weight"],
+                        )
                     )
-                )
 
-            stage = "metric"
-            with capture_warnings(run_summary["warnings"], fold="test", stage="metric"):
-                test_metrics = evaluate_metrics(
-                    y_true=test_test_df,
-                    y_pred=forecast_original,
-                    y_train=test_train_df,
-                    metrics_config=backtest_config.evaluation.native.metrics,
-                    fold_id="test",
-                    grouping_df=grouping_df,
-                    fold_weights=test_fold_weights,
-                    run_summary=run_summary,
-                )
+                stage = "metric"
+                with capture_warnings(
+                    run_summary["warnings"],
+                    fold="test",
+                    stage="metric",
+                ):
+                    test_metrics = evaluate_metrics(
+                        y_true=test_test_df,
+                        y_pred=forecast_original,
+                        y_train=test_train_df,
+                        metrics_config=backtest_config.evaluation.native.metrics,
+                        fold_id="test",
+                        grouping_df=grouping_df,
+                        fold_weights=test_fold_weights,
+                        run_summary=run_summary,
+                    )
 
             test_results = TestResults(
                 forecasts=forecast_original,
@@ -422,6 +468,43 @@ def run_backtest(
     if test_origin_typed is not None and test_horizon is not None:
         horizon_list.append((test_origin_typed, test_horizon))
 
+    # ---- temporal aggregation ----
+    aggregated: AggregatedResults | None = None
+    if backtest_config.aggregation is not None:
+        # Resolve calendar_df (same three-way pattern)
+        if isinstance(calendar_df, str):
+            calendar_df = pd.read_parquet(calendar_df)
+        elif (
+            calendar_df is None
+            and backtest_config.aggregation.calendar_source is not None
+        ):
+            calendar_df = pd.read_parquet(backtest_config.aggregation.calendar_source)
+
+        if calendar_df is None:
+            raise ValueError(
+                "calendar_df is required when an 'aggregation' config "
+                "block is present. Provide a DataFrame, a file path, "
+                "or set aggregation.calendar_source in the config."
+            )
+
+        # Build intermediate results for aggregate_backtest()
+        interim_results = BacktestResults(
+            cv=cv_results,
+            horizon=horizon_list,
+            config=raw_config,
+            git_hash=git_hash,
+            uv_lock_info=uv_lock_info,
+            run_summary=run_summary,
+            test=test_results,
+        )
+
+        aggregated = aggregate_backtest(
+            results=interim_results,
+            aggregation_config=backtest_config.aggregation,
+            evaluation_level_config=backtest_config.evaluation.aggregated,
+            calendar_df=calendar_df,
+        )
+
     return BacktestResults(
         cv=cv_results,
         horizon=horizon_list,
@@ -430,4 +513,5 @@ def run_backtest(
         uv_lock_info=uv_lock_info,
         run_summary=run_summary,
         test=test_results,
+        aggregated=aggregated,
     )
