@@ -751,9 +751,11 @@ def test_validate_acf_pacf_width_bool_rejected(acf_df_integer):
 def test_prepare_series_sorts_and_extracts(acf_df_integer):
     """Sorts by time_col and returns value_col as 1-D float array."""
     result = _prepare_series(acf_df_integer, "time", "value")
-    # acf_df_integer has time=[5,3,1,4,2], value=[1.0,2.5,1.5,3.0,2.0]
-    # sorted by time -> [1,2,3,4,5] -> values [1.5, 2.0, 2.5, 3.0, 1.0]
-    expected = np.array([1.5, 2.0, 2.5, 3.0, 1.0])
+    # acf_df_integer has time=[5,3,1,4,2,8,6,10,9,7],
+    #   value=[1.0,2.5,1.5,3.0,2.0,1.8,3.5,1.2,2.8,2.2]
+    # sorted by time -> [1,2,3,4,5,6,7,8,9,10]
+    #   -> values [1.5, 2.0, 2.5, 3.0, 1.0, 3.5, 2.2, 1.8, 2.8, 1.2]
+    expected = np.array([1.5, 2.0, 2.5, 3.0, 1.0, 3.5, 2.2, 1.8, 2.8, 1.2])
     np.testing.assert_array_equal(result, expected)
     assert result.dtype == float
 

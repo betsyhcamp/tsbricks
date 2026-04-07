@@ -38,10 +38,8 @@ def acf_df_datetime():
     """DataFrame with datetime time_col for ACF/PACF tests."""
     return pd.DataFrame(
         {
-            "time": pd.to_datetime(
-                ["2020-01-01", "2020-01-02", "2020-01-03", "2020-01-04", "2020-01-05"]
-            ),
-            "value": [1.0, 2.5, 1.5, 3.0, 2.0],
+            "time": pd.date_range("2020-01-01", periods=10, freq="D"),
+            "value": [1.0, 2.5, 1.5, 3.0, 2.0, 1.8, 3.5, 2.2, 2.8, 1.2],
         }
     )
 
@@ -51,8 +49,8 @@ def acf_df_integer():
     """DataFrame with integer time_col for ACF/PACF tests."""
     return pd.DataFrame(
         {
-            "time": [5, 3, 1, 4, 2],
-            "value": [1.0, 2.5, 1.5, 3.0, 2.0],
+            "time": [5, 3, 1, 4, 2, 8, 6, 10, 9, 7],
+            "value": [1.0, 2.5, 1.5, 3.0, 2.0, 1.8, 3.5, 1.2, 2.8, 2.2],
         }
     )
 
