@@ -62,6 +62,11 @@ line-length = 88
 target-version = "py311"
 extend-exclude = ["*.md", ".venv", "notebooks"]
 
+# Although would like to use a rolling date, chose fixed for reproducibility
+# when security vulerabilities are found in open source packages it takes time to find
+[tool.uv]
+exclude-newer = "2026-03-24T02:02:24Z"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
