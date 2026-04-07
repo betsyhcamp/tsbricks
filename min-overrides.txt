@@ -1,0 +1,10 @@
+# Floor versions for lower-bounds CI testing.
+# Only key runtime deps whose APIs tsbricks directly uses.
+coreforecast==0.0.16
+numpy==2.0.0
+pandas==2.2.2
+plotly==6.0.0
+pyarrow==17.0.0
+pydantic==2.5.0
+scipy==1.14.0
+statsmodels==0.14.0
