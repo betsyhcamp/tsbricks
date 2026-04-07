@@ -12,6 +12,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]
+        deps: ["latest", "min"]
 
     steps:
       - uses: actions/checkout@v4
@@ -32,17 +33,18 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Install minimum dependency versions
+        if: matrix.deps == 'min'
+        run: uv pip install --overrides min-overrides.txt -e .
+
       - name: Run pre-commit (file utilities + lint + format-check)
         run: task pre-commit
 
       - name: Run tests
         run: task test
 
-
       - name: Build documentation
         run: task docs
-
-
 
       - name: Build package
         run: task build
