@@ -146,6 +146,33 @@ Additional dependencies required by `tsbricks.backtesting`:
 
 - `polars` — accepted at the `run_backtest` entry point, converted to pandas internally
 
+### 3.5 Dependency Policy
+
+tsbricks uses a pinned `exclude-newer` timestamp in `pyproject.toml` for
+reproducible dependency resolution. This prevents `uv lock` from picking up
+untested new releases.
+
+- Main branch uses a **fixed timestamp** with a committed `uv.lock`.
+- Update the timestamp only via a **dedicated dependency-refresh PR**.
+- Rolling durations (e.g., `"2 weeks"`) are for local experimentation only.
+
+#### Refreshing Dependencies
+
+1. Update `exclude-newer` in `pyproject.toml` to the current date.
+1. Run `uv lock`, then `uv sync`, then `pytest` on both Python 3.11 and 3.12.
+1. Run min-bounds: `uv pip install --overrides min-overrides.txt -e .` then `pytest`.
+1. Review `uv.lock` diff for unexpected version jumps.
+1. Open a PR: "chore: Refresh dependency versions".
+
+#### Floor Version Notes
+
+Some floors are set by numpy 2.0 binary ABI compatibility:
+
+- `pandas>=2.2.2`, `scipy>=1.14` — first versions with numpy 2.0-compatible wheels.
+- `pydantic>=2.5` — first version allowing `model_`-prefixed fields.
+
+See `notes/spec_python312_dep_ranges.md` for full rationale.
+
 ______________________________________________________________________
 
 ## 4. Public API Surface
