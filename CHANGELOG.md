@@ -7,7 +7,7 @@ and this project adheres to **Semantic Versioning** (https://semver.org/).
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-03-29
+## [0.3.0] - 2026-04-06
 
 ### Added
 
@@ -20,14 +20,26 @@ and this project adheres to **Semantic Versioning** (https://semver.org/).
 - **Date x-tick labels** — `plot_seasonal` uses date-based x-axis labels when `ds` is datetime on both matplotlib and plotly backends; integer `ds` retains positional ticks.
 - **Plotly hover labels** — `plot_seasonal` shows original `ds` date on hover when `ds` is datetime, with auto-formatting for any granularity.
 - **Null `season_col` validation** — `plot_seasonal` raises `ValueError` when `season_col` contains missing values.
+- **Variable forecast horizons** — Per-origin horizon support in cross-validation and test folds, allowing different forecast lengths for each origin via `dict[origin, horizon]` syntax in config.
+- **Temporal aggregation** — `aggregate_backtest()` composable function for calendar-based temporal aggregation of backtest results; integrated into `run_backtest()` via `calendar_df` parameter.
+- **`AggregatedResults`** — New dataclass on `BacktestResults` for temporally aggregated forecasts and metrics.
+- **`EvaluationConfig` schema** — Structured evaluation configuration via `evaluation.native.metrics` path, replacing flat `BacktestConfig.metrics`.
+- **Python 3.12 support** — Tested and supported alongside Python 3.11.
+- **Dependency version ranges** — Expanded supported ranges for key packages (pandas `>=2.2.2,<3`, numpy `>=2.0,<3`, scipy `>=1.14,<2`, plotly `>=6.0,<7`, pydantic `>=2.5,<3`, statsmodels `>=0.14,<1`, pyarrow `>=17.0,<24`, coreforecast `>=0.0.16,<1`, google-cloud-bigquery `>=3.40.1,<4`).
+- **Lower-bounds CI testing** — 2x2 CI matrix (Python 3.11/3.12 x latest/min deps) with `min-overrides.txt` for floor version validation.
+- **`exclude-newer` pin** — Pinned timestamp in `pyproject.toml` for reproducible dependency resolution.
 
 ### Fixed
 
 - **`_tick_date` partial-season bug** — Representative tick dates are now derived from the longest season, preventing ~1-year x-axis jumps when the first custom season is incomplete.
+- **Duplicate timestamp validation** — `calendar_df` in `temporal_agg.py` now raises `ValueError` on duplicate timestamps.
+- **Fold-weight origin lookup** — Aggregated fold-weight origin lookup handles skipped folds correctly.
 
 ### Changed
 
-- **Documentation** — Added §4.7 (Plots) to `PACKAGE_MAINTAINER_SPEC.md`; updated `plot_seasonal` and `_assign_custom_seasons` docstrings with alignment guidance for incomplete first seasons.
+- **Renamed `backtesting/aggregations.py`** to `backtesting/metric_agg.py` for clarity.
+- **Metrics config path** — Metrics are now configured under `evaluation.native.metrics` instead of `BacktestConfig.metrics`.
+- **Documentation** — Added §3.5 (Dependency Policy) and §4.7 (Plots) to `PACKAGE_MAINTAINER_SPEC.md`; added Python 3.12 badge to README.
 
 ## [0.2.0] - 2026-03-25
 
