@@ -233,7 +233,7 @@ def test_aggregate_backtest_sum_values() -> None:
     fold_forecast = agg.cv_forecasts["fold_0"]
     jan = fold_forecast[fold_forecast["fiscal_month"] == "2023-01"]
     # 2 weeks x 5.0 = 10.0
-    assert jan["ypred"].iloc[0] == 10.0
+    assert jan["ypred"].iloc[0] == pytest.approx(10.0)
 
 
 def test_aggregate_backtest_metrics_evaluated() -> None:

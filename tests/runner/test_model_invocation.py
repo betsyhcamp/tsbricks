@@ -92,7 +92,7 @@ def test_invoke_passes_hyperparameters(panel_df: pd.DataFrame) -> None:
     )
     _, _, model_obj = invoke_model(panel_df, cfg, horizon=3)
 
-    assert model_obj["hyperparameters"]["alpha"] == 0.5
+    assert model_obj["hyperparameters"]["alpha"] == pytest.approx(0.5)
 
 
 def test_invoke_forwards_future_x_df(panel_df: pd.DataFrame) -> None:
