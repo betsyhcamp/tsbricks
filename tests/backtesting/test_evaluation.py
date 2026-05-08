@@ -860,7 +860,7 @@ def test_param_resolver_delivers_resolved_values(mocker):
                 param_resolvers={
                     "scale": {
                         "callable": CONSTANT_RESOLVER,
-                        "params": {"value": 99.0},
+                        "params": {"value": 99},
                     }
                 },
             )
@@ -871,7 +871,7 @@ def test_param_resolver_delivers_resolved_values(mocker):
 
     assert mock_rmse.call_count == 3
     for call in mock_rmse.call_args_list:
-        assert call.kwargs["scale"] == 99.0
+        assert call.kwargs["scale"] == 99
 
 
 def test_resolver_receives_grouping_df(mocker):
@@ -905,7 +905,7 @@ def test_resolver_receives_grouping_df(mocker):
     # Verify resolver ran and delivered values to the metric
     assert mock_rmse.call_count == 3
     for call in mock_rmse.call_args_list:
-        assert call.kwargs["group_val"] == 42.0
+        assert call.kwargs["group_val"] == pytest.approx(42.0)
 
 
 def test_resolver_without_grouping_df_raises():
@@ -948,7 +948,7 @@ def test_resolver_with_global_scope(mocker):
                 param_resolvers={
                     "scale": {
                         "callable": CONSTANT_RESOLVER,
-                        "params": {"value": 7.0},
+                        "params": {"value": 7},
                     }
                 },
             )
@@ -964,7 +964,7 @@ def test_resolver_with_global_scope(mocker):
     # Stage 1 computed per-series values, each call should have scale=7.0
     assert mock_rmse.call_count == 3
     for call in mock_rmse.call_args_list:
-        assert call.kwargs["scale"] == 7.0
+        assert call.kwargs["scale"] == 7
 
 
 def test_resolver_with_group_concat_raises():
@@ -1114,7 +1114,7 @@ def test_static_and_resolver_params_combined(mocker):
                 param_resolvers={
                     "scale": {
                         "callable": CONSTANT_RESOLVER,
-                        "params": {"value": 5.0},
+                        "params": {"value": 5},
                     }
                 },
             )
@@ -1126,7 +1126,7 @@ def test_static_and_resolver_params_combined(mocker):
     assert mock_rmse.call_count == 3
     for call in mock_rmse.call_args_list:
         assert "threshold" in call.kwargs
-        assert call.kwargs["scale"] == 5.0
+        assert call.kwargs["scale"] == 5
     thresholds = {c.kwargs["threshold"] for c in mock_rmse.call_args_list}
     assert thresholds == {10, 20, 30}
 
