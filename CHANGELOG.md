@@ -7,6 +7,17 @@ and this project adheres to **Semantic Versioning** (https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-08
+
+### Fixed
+
+- **Float-equality assertions in unit tests** — Replaced multiple direct float comparisons in tests to avoid flaky equality checks.
+
+### Changed
+
+- **Commit history** — All commit messages retroactively prefixed with `XFSC-36272: ` for issue tracking. This rewrites all SHAs prior to v0.3.1; clones predating this release should be re-fetched.
+- **Untracked `backtest_validation.py`** — Removed from the tracked git index (it was a local notebook driver, not shipped code).
+
 ## [0.3.0] - 2026-04-06
 
 ### Added
