@@ -1357,7 +1357,7 @@ def test_plot_seasonal_matplotlib_alpha(seasonal_plot_data):
     )
     ax = fig.axes[0]
     for line in ax.lines:
-        assert line.get_alpha() == 0.5
+        assert line.get_alpha() == pytest.approx(0.5)
     plt.close(fig)
 
 
@@ -1495,7 +1495,7 @@ def test_plot_seasonal_plotly_custom_alpha(seasonal_df_datetime, no_show):
         return_fig=True,
     )
     for trace in fig.data:
-        assert trace.opacity == 0.5
+        assert trace.opacity == pytest.approx(0.5)
 
 
 def test_plot_seasonal_plotly_custom_dimensions(seasonal_df_datetime, no_show):
@@ -1600,7 +1600,7 @@ def test_plot_seasonal_matplotlib_custom_alpha(seasonal_df_datetime, no_show):
     )
     ax = fig.axes[0]
     for line in ax.lines:
-        assert line.get_alpha() == 0.3
+        assert line.get_alpha() == pytest.approx(0.3)
     plt.close(fig)
 
 
