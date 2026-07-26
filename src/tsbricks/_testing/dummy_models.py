@@ -1,4 +1,17 @@
-"""Dummy model callables for testing invoke_model return-type detection."""
+"""Dummy model callables for testing model invocation.
+
+Two families live here:
+
+* **Fit-and-forecast callables** ``(train_df, horizon, **kwargs)`` for
+  ``invoke_model``: return-type detection and tuple unpacking.
+* **Predict-only callables** ``(fitted_model, horizon, **kwargs)`` for
+  ``invoke_predict``: these never refit; they receive an
+  already-fitted object and produce a forecast from it.
+
+Dotted paths to these callables are used verbatim in tests, which
+resolve them through the real ``dynamic_import``. No test mocks
+resolution, so renaming anything here breaks tests by design.
+"""
 
 from __future__ import annotations
 
@@ -95,3 +108,41 @@ def returns_tuple_of_four(
     """Return a 4-tuple — invalid arity for testing."""
     forecast_df, fitted_df = forecast_and_fitted(train_df, horizon, **kwargs)
     return forecast_df, fitted_df, {"name": "dummy"}, "extra"
+
+
+# ---- Predict-only callables (invoke_predict) ----
+
+
+def predict_only(fitted_model: object, horizon: int, **kwargs: object) -> pd.DataFrame:
+    """Echo everything received back as a one-row DataFrame.
+
+    Deliberately shaped unlike a realistic predict callable. It ignores
+    ``fitted_model`` rather than forecasting from it, and takes
+    ``future_x_df`` through ``**kwargs`` instead of as a named
+    parameter, so a test can tell "omitted" from "passed as ``None``" since
+    ``has_future_x_df`` is False only in the former case. A named
+    ``future_x_df=None`` parameter would collapse the two.
+
+    Columns:
+        fitted_model: the object received in slot 1, by identity.
+        horizon: the value received in slot 2.
+        has_future_x_df: whether ``future_x_df`` was passed at all.
+        kwargs: every keyword argument received, in one cell -- so
+            ``predict_params`` values and ``future_x_df`` can be
+            asserted against by identity.
+    """
+    return pd.DataFrame(
+        [
+            {
+                "fitted_model": fitted_model,
+                "horizon": horizon,
+                "has_future_x_df": "future_x_df" in kwargs,
+                "kwargs": kwargs,
+            }
+        ]
+    )
+
+
+def predict_returns_int(fitted_model: object, horizon: int, **kwargs: object) -> int:
+    """Return an int which is an invalid predict return type for testing."""
+    return 6
