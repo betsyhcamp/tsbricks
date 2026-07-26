@@ -4,7 +4,7 @@ from typing import Any
 
 import pandas as pd
 
-from tsbricks.runner._utils import dynamic_import
+from tsbricks.runner.utils import dynamic_import
 
 
 def resolve_model(model_config: Any) -> tuple[Any, dict]:

@@ -5,7 +5,7 @@ from typing import Any
 import pandas as pd
 
 from tsbricks.blocks.transforms.base import BaseTransform
-from tsbricks.runner._utils import dynamic_import
+from tsbricks.runner.utils import dynamic_import
 
 
 def fit_transforms(

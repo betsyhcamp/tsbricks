@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from tsbricks.backtesting.schema import MetricsConfig
-from tsbricks.runner._utils import dynamic_import
+from tsbricks.runner.utils import dynamic_import
 
 
 def _resolve_params(

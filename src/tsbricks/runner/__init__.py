@@ -4,6 +4,7 @@ from tsbricks.runner.transform_pipeline import (
     fit_transforms,
     inverse_transforms,
 )
+from tsbricks.runner.utils import dynamic_import
 from tsbricks.runner.warnings_utils import capture_warnings, format_warnings
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "invoke_model",
     "capture_warnings",
     "format_warnings",
+    "dynamic_import",
 ]
