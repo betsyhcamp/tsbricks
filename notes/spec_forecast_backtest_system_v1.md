@@ -716,52 +716,15 @@ model:
 | `predict_params`   | **yes**                      | `callable` forecasts as well as fits, so it needs predict-time kwargs too |
 | `predict_callable` | **no**                       | `run_backtest()` fits every fold; it has no predict-only step             |
 
-`predict_callable` exists for the predict-only entrypoint `invoke_predict()`, which forecasts from an already-fitted model without refitting (see section 7.7). Backtesting never reaches for it — the path is not resolved, so a backtest runs normally even if `predict_callable` names a module that cannot be imported.
+`predict_callable` exists for the predict-only entrypoint `invoke_predict()`, which forecasts from an already-fitted model without refitting (see section 7.6). Backtesting never reaches for it — the path is not resolved, so a backtest runs normally even if `predict_callable` names a module that cannot be imported.
 
 `predict_params` is deliberately read by **both** paths. Prediction-interval levels must be identical in backtesting and in serving, or the two are producing different products; declaring them once in `predict_params` is what keeps them in step. Where a key appears in both `hyperparameters` and `predict_params` with **differing** values, `hyperparameters` governs the combined fit-and-forecast call and config parsing emits a `UserWarning` naming the overlapping keys. Identical values are silent.
 
 Neither dotted path is imported at config-parse time; both resolve when they are called. See `spec_invoke_predict_entrypoint.md` for the full specification.
 
-### 7.6 Model Serialization
+Model serialization is not implemented in V1. `ModelConfig.serialization` parses but is not consumed, and `BacktestResults.fitted_models` is never populated. The intended design is retained in Appendix A. To obtain a fitted model today, call `invoke_model()` directly and take the third element of its return tuple.
 
-Model serialization is opt-in via the config. When enabled, the system attempts to serialize the fitted model on a best-effort basis after each fold. If serialization fails, the system logs a warning and continues.
-
-The user specifies the serialization method:
-
-- **`pickle`**, **`cloudpickle`**, **`joblib`**: The system serializes the model object externally using the specified library.
-- **`model_method`**: The system calls a method on the fitted model object itself (e.g., `.save()`). This is the recommended approach for Nixtla packages (statsforecast, mlforecast, neuralforecast), which all provide `.save()` and `.load()` methods on fitted models. The `save_method` field specifies the method name and defaults to `save`.
-- **User-provided callable**: An import path to a custom serialization function.
-
-All methods require the model callable to return the fitted model object as the third element of the return tuple (see section 7.1). If the model object is not returned and serialization is enabled, the system logs a warning and skips serialization.
-
-```yaml
-# Using Nixtla's built-in .save() method
-model:
-  callable: my_project.models.my_statsforecast_model
-  hyperparameters: {}
-  serialization:
-    enabled: true
-    method: model_method
-    save_method: save       # method name on the model object, defaults to "save"
-
-# Using joblib
-model:
-  callable: my_project.models.my_model
-  hyperparameters: {}
-  serialization:
-    enabled: true
-    method: joblib
-
-# Using a custom serialization callable
-model:
-  callable: my_project.models.my_model
-  hyperparameters: {}
-  serialization:
-    enabled: true
-    method: my_project.serializers.custom_save
-```
-
-### 7.7 Predict-Only Callable Convention
+### 7.6 Predict-Only Callable Convention
 
 `run_backtest()` does **not** use this callable. It is invoked only by the predict-only entrypoint `invoke_predict()`, which forecasts from an already-fitted model without refitting — the fit-once-predict-many shape used by round-count calibration, periodic recalibration, and production serving. The two entrypoints take the same config object; only the first argument differs:
 
@@ -962,27 +925,9 @@ ______________________________________________________________________
 Parallelization is split between the model and the evaluation system:
 
 - **Model fitting and prediction**: Parallelization is the model's responsibility, configured through `hyperparameters` (fit-time) and `predict_params` (predict-time) under the model library's own parameter name — `n_jobs` for statsforecast, `num_threads` for LightGBM, and so on. tsbricks forwards these as `**kwargs` and does not interpret them. Models that support internal parallelization use them; models that do not (e.g. Chronos) ignore them. There is no framework-level model-parallelism setting.
-- **Forecast evaluation**: The system owns parallelization using Python's `multiprocessing` module.
+- **Forecast evaluation**: Intended to be owned by the system, but **not implemented in V1**. Metric computation is sequential; `src/tsbricks/` contains no `multiprocessing`, `joblib`, or strategy handling.
 
-### 9.2 Evaluation Parallelization Strategies
-
-The user specifies the evaluation parallelization strategy in the config:
-
-- **`across_series`**: Each `unique_id` is evaluated independently in parallel. Primary win for panel data.
-- **`across_folds`**: Each cross-validation fold is evaluated in parallel for a given series.
-- **`nested`**: Parallelization across both series and folds.
-
-### 9.3 Configuration
-
-```yaml
-parallelization:
-  parallel_eval_strategy: across_series
-  eval_n_workers: 4       # -1 for all available cores
-```
-
-### 9.4 Environment Compatibility
-
-The parallelization approach is compatible with Vertex AI pipeline worker nodes, Vertex AI notebook instances, and local laptops with multiple CPU cores.
+Evaluation parallelization is not implemented in V1. `BacktestConfig.parallelization` parses but is not consumed. The intended design is retained in Appendix A.
 
 ______________________________________________________________________
 
@@ -1045,7 +990,7 @@ model:
     seasonal_order: [1, 1, 1, 12]
   # Optional. NOT consumed by run_backtest() -- it fits every fold and has no
   # predict-only step. Used by invoke_predict() to forecast from an
-  # already-fitted model without refitting (see section 7.7).
+  # already-fitted model without refitting (see section 7.6).
   predict_callable: my_project.models.auto_arima_predict
   # Optional. Consumed by run_backtest(), because model.callable forecasts as
   # well as fits, AND by invoke_predict(). Declared once so backtesting and
@@ -1364,7 +1309,6 @@ ______________________________________________________________________
 The following capabilities are acknowledged but deferred beyond V1:
 
 - **Sliding window cross-validation.** The expanding window implementation is designed to accommodate this without architectural changes.
-- **Integration tests.** End-to-end tests running `run_backtest` with synthetic data and verifying the full pipeline.
 - **System-managed data loading.** Reading input data from file paths, GCS URIs, or bucket+prefix configurations specified in the YAML config.
 - **Experiment tracking abstraction.** A generic logging interface with pluggable backends for MLflow and Vertex AI Experiments.
 - **Model adapter pattern.** A formal adapter interface with `fit`, `predict`, and `get_fitted_values` methods, replacing or extending the simple callable convention.
@@ -1373,8 +1317,78 @@ The following capabilities are acknowledged but deferred beyond V1:
 - **Per-group transform scope.** A `per_group` scope for transforms that apply to subsets of series grouped by a column (e.g., currency, product class), enabling different transform parameters per group.
 - **Metric evaluation on transformed scale.** Option to compute metrics on the transformed scale (skipping inverse transforms) rather than the original scale of `y`. This is relevant for cases like nominal-to-real currency transforms where evaluation on the transformed scale may be preferred. Deferred due to complexity: it affects the transform pipeline, metric computation (context-aware metrics need `y_train` on the same scale), residual scale consistency, and artifact metadata tracking.
 - **Native Polars support.** Full native Polars support throughout the internal pipeline (transforms, metrics, model callables) for performance benefits, replacing the V1 approach of converting Polars to pandas at the entry point.
-- **Transform parallelization.** Parallelization of per-series transform fitting across `unique_id` values, which is especially important when transforms involve a fitting process to find a parameter (e.g., Box-Cox lambda via Guerrero method). V1 parallelizes model fitting (via model's own `n_jobs`) and evaluation (via the system's `multiprocessing`), but transform fitting is sequential.
+- **Transform parallelization.** Parallelization of per-series transform fitting across `unique_id` values, which is especially important when transforms involve a fitting process to find a parameter (e.g., Box-Cox lambda via Guerrero method). V1 parallelizes model fitting only, through the model library's own parameter supplied in `hyperparameters` / `predict_params`. Evaluation and transform fitting are both sequential.
 - **Native hyperparameter optimization.** Built-in integration with Optuna or similar frameworks, allowing the config to specify hyperparameter search spaces instead of fixed values and having the system manage the optimization loop internally. V1 supports hyperparameter optimization via external orchestration using the dict-based config option.
 - **Forward-looking forecast (`run_forecast`).** A second entry point that reuses the same YAML config, transform pipeline, and model invocation primitives to produce a forward-looking forecast on the full dataset. The V1 internal architecture is designed to support this with minimal additional code.
 - **`get_fitted_params` naming and contract.** The `get_fitted_params` method on `BaseTransform` implies parameters learned from data, but not all transforms fit parameters (e.g., `WorkdayNormalizeTransform`, log transforms). Currently these transforms return an empty dict. As more non-fitting transforms are added, consider whether to rename or broaden this method (e.g., `get_params`) to accommodate transforms that have configuration state but no fitted state.
 - **Standalone config validation for composable step functions.** When the user calls `run_backtest`, Pydantic validation runs automatically. When a power user calls composable step functions like `fit_transforms` directly, they bypass this validation. Consider exposing a standalone `validate_config` function that power users can call independently of `run_backtest` to get the same validation guarantees.
+
+______________________________________________________________________
+
+## Appendix A: Deferred Design
+
+**Nothing in this appendix is implemented.** These sections were specified for V1 and never built. They are retained verbatim as the design record for features that are still wanted; they are separated from the body so that no section of this specification describes behavior the package does not have.
+
+Two subsystems are recorded here, each with a pointer left at its original location:
+
+- **Model serialization** — formerly §7.6. `ModelConfig.serialization` parses but is not consumed; `BacktestResults.fitted_models` is declared but never populated. No serialization code exists in `src/`.
+- **Evaluation parallelization** — formerly §9.2–§9.4. `BacktestConfig.parallelization` parses but is not consumed. `src/tsbricks/` contains no `multiprocessing`, `joblib`, or strategy handling.
+
+### A.1 Model Serialization
+
+Model serialization is opt-in via the config. When enabled, the system attempts to serialize the fitted model on a best-effort basis after each fold. If serialization fails, the system logs a warning and continues.
+
+The user specifies the serialization method:
+
+- **`pickle`**, **`cloudpickle`**, **`joblib`**: The system serializes the model object externally using the specified library.
+- **`model_method`**: The system calls a method on the fitted model object itself (e.g., `.save()`). This is the recommended approach for Nixtla packages (statsforecast, mlforecast, neuralforecast), which all provide `.save()` and `.load()` methods on fitted models. The `save_method` field specifies the method name and defaults to `save`.
+- **User-provided callable**: An import path to a custom serialization function.
+
+All methods require the model callable to return the fitted model object as the third element of the return tuple (see section 7.1). If the model object is not returned and serialization is enabled, the system logs a warning and skips serialization.
+
+```yaml
+# Using Nixtla's built-in .save() method
+model:
+  callable: my_project.models.my_statsforecast_model
+  hyperparameters: {}
+  serialization:
+    enabled: true
+    method: model_method
+    save_method: save       # method name on the model object, defaults to "save"
+
+# Using joblib
+model:
+  callable: my_project.models.my_model
+  hyperparameters: {}
+  serialization:
+    enabled: true
+    method: joblib
+
+# Using a custom serialization callable
+model:
+  callable: my_project.models.my_model
+  hyperparameters: {}
+  serialization:
+    enabled: true
+    method: my_project.serializers.custom_save
+```
+
+### A.2 Evaluation Parallelization Strategies
+
+The user specifies the evaluation parallelization strategy in the config:
+
+- **`across_series`**: Each `unique_id` is evaluated independently in parallel. Primary win for panel data.
+- **`across_folds`**: Each cross-validation fold is evaluated in parallel for a given series.
+- **`nested`**: Parallelization across both series and folds.
+
+### A.3 Evaluation Parallelization Configuration
+
+```yaml
+parallelization:
+  parallel_eval_strategy: across_series
+  eval_n_workers: 4       # -1 for all available cores
+```
+
+### A.4 Environment Compatibility
+
+The parallelization approach is compatible with Vertex AI pipeline worker nodes, Vertex AI notebook instances, and local laptops with multiple CPU cores.
