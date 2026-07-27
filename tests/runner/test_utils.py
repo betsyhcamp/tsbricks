@@ -20,3 +20,13 @@ def test_dynamic_import_is_public_api() -> None:
 
     assert exported is dynamic_import
     assert "dynamic_import" in tsbricks.runner.__all__
+
+
+def test_resolve_predict_is_public_api() -> None:
+    """resolve_predict is exported from the tsbricks.runner namespace."""
+    import tsbricks.runner
+    from tsbricks.runner import resolve_predict as exported
+    from tsbricks.runner.model_invocation import resolve_predict
+
+    assert exported is resolve_predict
+    assert "resolve_predict" in tsbricks.runner.__all__

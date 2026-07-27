@@ -1,4 +1,8 @@
-from tsbricks.runner.model_invocation import invoke_model, resolve_model
+from tsbricks.runner.model_invocation import (
+    invoke_model,
+    resolve_model,
+    resolve_predict,
+)
 from tsbricks.runner.transform_pipeline import (
     apply_transforms,
     fit_transforms,
@@ -12,6 +16,7 @@ __all__ = [
     "apply_transforms",
     "inverse_transforms",
     "resolve_model",
+    "resolve_predict",
     "invoke_model",
     "capture_warnings",
     "format_warnings",
