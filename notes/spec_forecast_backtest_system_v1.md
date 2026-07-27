@@ -699,9 +699,29 @@ model:
     order: [1, 1, 1]
     seasonal_order: [1, 1, 1, 12]
   model_n_jobs: 4
+  predict_callable: my_project.models.my_arima_predict
+  predict_params:
+    level: [80, 95]
 ```
 
 The `model_n_jobs` parameter is passed through to the model callable for models that support internal parallelization (e.g., `n_jobs` in statsforecast). Models that do not support it (e.g., Chronos) simply ignore it.
+
+`predict_callable` and `predict_params` are both optional, and a config omitting them behaves exactly as it did before they existed.
+
+**What `run_backtest()` consumes, and what it does not:**
+
+| Field              | Consumed by `run_backtest()` | Why                                                                       |
+| ------------------ | ---------------------------- | ------------------------------------------------------------------------- |
+| `callable`         | yes                          | the fit-and-forecast callable invoked once per fold                       |
+| `hyperparameters`  | yes                          | fit-time kwargs, forwarded to `callable`                                  |
+| `predict_params`   | **yes**                      | `callable` forecasts as well as fits, so it needs predict-time kwargs too |
+| `predict_callable` | **no**                       | `run_backtest()` fits every fold; it has no predict-only step             |
+
+`predict_callable` exists for the predict-only entrypoint `invoke_predict()`, which forecasts from an already-fitted model without refitting (see section 7.7). Backtesting never reaches for it — the path is not resolved, so a backtest runs normally even if `predict_callable` names a module that cannot be imported.
+
+`predict_params` is deliberately read by **both** paths. Prediction-interval levels must be identical in backtesting and in serving, or the two are producing different products; declaring them once in `predict_params` is what keeps them in step. Where a key appears in both `hyperparameters` and `predict_params` with **differing** values, `hyperparameters` governs the combined fit-and-forecast call and config parsing emits a `UserWarning` naming the overlapping keys. Identical values are silent.
+
+Neither dotted path is imported at config-parse time; both resolve when they are called. See `spec_invoke_predict_entrypoint.md` for the full specification.
 
 ### 7.6 Model Serialization
 
@@ -742,6 +762,49 @@ model:
     enabled: true
     method: my_project.serializers.custom_save
 ```
+
+### 7.7 Predict-Only Callable Convention
+
+`run_backtest()` does **not** use this callable. It is invoked only by the predict-only entrypoint `invoke_predict()`, which forecasts from an already-fitted model without refitting — the fit-once-predict-many shape used by round-count calibration, periodic recalibration, and production serving. The two entrypoints take the same config object; only the first argument differs:
+
+```python
+fcst, fitted, model_obj = invoke_model(train_df, model_config, horizon)  # fit and forecast
+fcst = invoke_predict(model_obj, model_config, horizon)  # forecast only
+```
+
+Predict callables are user-provided callables with the following signature:
+
+```python
+def my_model_predict(
+    fitted_model, horizon: int, future_x_df: pd.DataFrame | None = None, **kwargs
+) -> pd.DataFrame:
+    """
+    Args:
+        fitted_model: An already-fitted model object. The callable must not
+                      refit it.
+        horizon: Number of periods to forecast.
+        future_x_df: Future exogenous data, passed when the caller supplies
+                     it and omitted from kwargs entirely when not.
+        **kwargs: Every key in the config's predict_params (e.g. level).
+
+    Returns:
+        DataFrame: The forecast. Schema as section 7.2 (ds, unique_id,
+        ypred). Prediction intervals are extra columns, e.g. ypred-lo-80
+        and ypred-hi-80, not a different return shape.
+    """
+    ...
+```
+
+Four requirements:
+
+- **Accept `fitted_model` and `horizon` as the first two positional parameters.** Parameter *position* is part of the contract, for callers using positional calls or `functools.partial`.
+- **Accept `future_x_df` and every `predict_params` key as keyword arguments.** A callable declares the keywords it supports (e.g. `level=None`) and/or accepts `**kwargs`.
+- **Return a forecast DataFrame.** Returning anything else — a `(forecast, fitted)` tuple copied from the fit callable, say — raises `TypeError` naming the offending callable, rather than letting the bad value travel into scoring.
+- **Do not refit.** The callable receives an already-fitted model and produces a forecast from it.
+
+Unlike the fit-and-forecast callable in section 7.1, a predict callable receives **no training data**. It should derive whatever series metadata it needs — ids, last observed timestamps — from the fitted model object, so that it behaves identically on a freshly fitted model and on one restored from disk. One consequence worth knowing: this requires the fitted object to *carry* the history it needs, which can make persisted models substantially larger and their embedded history staler over time. That is a property of the model library rather than of this contract.
+
+`hyperparameters` are **not** forwarded to a predict callable. They are fit-time and already baked into the fitted object; passing `num_leaves=31` to a predict function would raise `TypeError`. Predict-time parameters travel in `predict_params` (see section 7.5).
 
 ______________________________________________________________________
 
@@ -983,6 +1046,16 @@ model:
     order: [1, 1, 1]
     seasonal_order: [1, 1, 1, 12]
   model_n_jobs: 4
+  # Optional. NOT consumed by run_backtest() -- it fits every fold and has no
+  # predict-only step. Used by invoke_predict() to forecast from an
+  # already-fitted model without refitting (see section 7.7).
+  predict_callable: my_project.models.auto_arima_predict
+  # Optional. Consumed by run_backtest(), because model.callable forecasts as
+  # well as fits, AND by invoke_predict(). Declared once so backtesting and
+  # serving emit the same product. On overlap with hyperparameters,
+  # hyperparameters wins and config parsing warns (see section 7.5).
+  predict_params:
+    level: [80, 95]
   serialization:
     enabled: false
     method: model_method

@@ -204,10 +204,23 @@ from tsbricks.runner import (
     apply_transforms,
     inverse_transforms,
     resolve_model,
+    resolve_predict,
     invoke_model,
-    serialize_model,
+    invoke_predict,
+    dynamic_import,
 )
 ```
+
+`invoke_model` fits **and** forecasts; `invoke_predict` forecasts from an already-fitted model without refitting. Both take the same `ModelConfig`, and only the first argument differs — training data, or a fitted model:
+
+```python
+fcst, fitted, model_obj = invoke_model(train_df, model_config, horizon)
+fcst = invoke_predict(model_obj, model_config, horizon)
+```
+
+`resolve_model` and `resolve_predict` return `(callable, kwargs)` for callers who want to hoist resolution out of a loop and call the resolved function directly. `dynamic_import` resolves any dotted `module.attribute` path and is the mechanism behind every callable reference in the YAML config.
+
+Note that `invoke_predict`'s second argument is annotated `Any` and its contract is structural: any object exposing `predict_callable` and `predict_params` works. This is required by the one-way dependency rule in §2.3 — `runner/` cannot import `ModelConfig` from `backtesting/`. A serving pipeline may import `ModelConfig` from `tsbricks.backtesting.schema` or pass its own config object; both are supported.
 
 ### 4.4 Built-in Transforms
 
@@ -288,6 +301,13 @@ The backtesting system's YAML config references callables by import path. There 
 # User-provided model
 model:
   callable: my_project.models.auto_arima_forecast
+  hyperparameters:
+    season_length: 12
+  # Optional: how to forecast from an already-fitted model, for invoke_predict.
+  # run_backtest() does not consume predict_callable.
+  predict_callable: my_project.models.auto_arima_predict
+  predict_params:
+    level: [80, 95]
 
 # User-provided custom metric
 - callable: my_project.metrics.custom_metric
