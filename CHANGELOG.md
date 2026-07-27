@@ -24,6 +24,10 @@ and this project adheres to **Semantic Versioning** (https://semver.org/).
 - **Model-invocation error messages now name the offending callable** — Exception types are unchanged; only message text differs, and message text is not a stable API.
 - **`resolve_model` return values expanded** — It now returns the complete config-derived kwargs which are `{**predict_params, **hyperparameters}`. Previously, `resolve_model` returned `hyperparameters` only. Impacts only callers external to the package using `resolve_model` when inspecting hyperparameters, logging, or config diffing. Configs that do not set `predict_params` are unaffected since the returned dict only differs when `predict_params` set.
 
+### Removed
+
+- **BREAKING** — **`ModelConfig.model_n_jobs` removed** — The field was declared but read nowhere in `src/`; it never had the pass-through effect its documentation claimed. Model parallelism is configured through `hyperparameters` (fit-time) and `predict_params` (predict-time) under the model library's own parameter name. Configs still carrying the key continue to parse, but `cfg.model.model_n_jobs` now raises `AttributeError`.
+
 ## [0.3.1] - 2026-05-08
 
 ### Fixed

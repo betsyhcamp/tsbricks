@@ -698,13 +698,12 @@ model:
   hyperparameters:
     order: [1, 1, 1]
     seasonal_order: [1, 1, 1, 12]
-  model_n_jobs: 4
   predict_callable: my_project.models.my_arima_predict
   predict_params:
     level: [80, 95]
 ```
 
-The `model_n_jobs` parameter is passed through to the model callable for models that support internal parallelization (e.g., `n_jobs` in statsforecast). Models that do not support it (e.g., Chronos) simply ignore it.
+**Model fitting and prediction:** Parallelization is the model's responsibility, configured through `hyperparameters` (fit-time) and `predict_params` (predict-time) under the model library's own parameter name — `n_jobs` for statsforecast, `num_threads` for LightGBM, and so on. tsbricks forwards these as `**kwargs` and does not interpret them. Models that support internal parallelization use them; models that do not (e.g. Chronos) ignore them. There is no framework-level model-parallelism setting.
 
 `predict_callable` and `predict_params` are both optional, and a config omitting them behaves exactly as it did before they existed.
 
@@ -740,7 +739,6 @@ All methods require the model callable to return the fitted model object as the 
 model:
   callable: my_project.models.my_statsforecast_model
   hyperparameters: {}
-  model_n_jobs: 4
   serialization:
     enabled: true
     method: model_method
@@ -963,7 +961,7 @@ ______________________________________________________________________
 
 Parallelization is split between the model and the evaluation system:
 
-- **Model fitting and prediction**: Parallelization is the model's responsibility. The system passes `model_n_jobs` through to the model callable via `**kwargs`. Models that support internal parallelization (e.g., statsforecast's `n_jobs`) use it; models that do not (e.g., Chronos) ignore it.
+- **Model fitting and prediction**: Parallelization is the model's responsibility, configured through `hyperparameters` (fit-time) and `predict_params` (predict-time) under the model library's own parameter name — `n_jobs` for statsforecast, `num_threads` for LightGBM, and so on. tsbricks forwards these as `**kwargs` and does not interpret them. Models that support internal parallelization use them; models that do not (e.g. Chronos) ignore them. There is no framework-level model-parallelism setting.
 - **Forecast evaluation**: The system owns parallelization using Python's `multiprocessing` module.
 
 ### 9.2 Evaluation Parallelization Strategies
@@ -1045,7 +1043,6 @@ model:
   hyperparameters:
     order: [1, 1, 1]
     seasonal_order: [1, 1, 1, 12]
-  model_n_jobs: 4
   # Optional. NOT consumed by run_backtest() -- it fits every fold and has no
   # predict-only step. Used by invoke_predict() to forecast from an
   # already-fitted model without refitting (see section 7.7).

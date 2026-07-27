@@ -259,7 +259,6 @@ def test_model_config_defaults(valid_cfg: dict) -> None:
     assert cfg.model.hyperparameters == {}
     assert cfg.model.predict_callable is None
     assert cfg.model.predict_params is None
-    assert cfg.model.model_n_jobs is None
     assert cfg.model.serialization is None
 
 
