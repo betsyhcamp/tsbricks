@@ -7,6 +7,23 @@ and this project adheres to **Semantic Versioning** (https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`invoke_predict`** — Predict-only counterpart to `invoke_model`. Runs a model's forecast step against an already-fitted model object without refitting, returning the forecast DataFrame (`tsbricks.runner.invoke_predict`). Signature is `invoke_predict(fitted_model, model_config, horizon, future_x_df=None)` which is the same as `invoke_model` except that `train_df` becomes `fitted_model`.
+- **`resolve_predict`** — Mirror of `resolve_model` for the predict-only callable. Returns `(predict_fn, predict_params)` so a caller predicting repeatedly can resolve once and call the function directly (`tsbricks.runner.resolve_predict`).
+- **`ModelConfig.predict_callable`** — Optional dotted path to a predict-only callable. Not consumed by `run_backtest`, which fits per fold and has no predict-only step.
+- **`ModelConfig.predict_params`** — Optional predict-time parameters (e.g. prediction-interval levels). Read by **both** entrypoints, so a project using both declares them once instead of duplicating them across fit and serve.
+- **Public `dynamic_import`** — Now exported from `tsbricks.runner`. Resolves any dotted `module.attribute` path.
+
+### Changed
+
+- **BREAKING** — **`tsbricks.runner._utils` renamed to `tsbricks.runner.utils`** — Hard rename, no compatibility shim. The module contains one function which is now public API. Import `dynamic_import` from `tsbricks.runner` instead.
+- **`invoke_model` forwards `predict_params`** — Its callable fits *and* forecasts, so it needs predict-time parameters too. Configs that do not set `predict_params` are unaffected.
+- **Overlapping keys emit a `UserWarning` at config-parse time** — When `hyperparameters` and `predict_params` both set a key to *differing* values, `ModelConfig` validation names the overlapping keys and states that `hyperparameters` governs the combined fit-and-forecast call. Overlapping keys with identical values are silent so do not warn. The overlap can be deliberate (fit on 16 cores, serve on 2), so this warns rather than raising.
+- **BREAKING** — **A `horizon` key in either params dict now raises `ValueError`** — `horizon` is passed positionally by tsbricks. Almost all such configs already failed, with `TypeError: got multiple values for argument 'horizon'` naming the callable rather than the config at fault. One shape did work and is now rejected: a callable whose horizon parameter is named something else (`def f(train_df, h, **kwargs)`), which let the config's `horizon` fall into `**kwargs`. Remove the key. `future_x_df` is deliberately not guarded: it works today, and a caller-supplied argument overrides it.
+- **Model-invocation error messages now name the offending callable** — Exception types are unchanged; only message text differs, and message text is not a stable API.
+- **`resolve_model` return values expanded** — It now returns the complete config-derived kwargs which are `{**predict_params, **hyperparameters}`. Previously, `resolve_model` returned `hyperparameters` only. Impacts only callers external to the package using `resolve_model` when inspecting hyperparameters, logging, or config diffing. Configs that do not set `predict_params` are unaffected since the returned dict only differs when `predict_params` set.
+
 ## [0.3.1] - 2026-05-08
 
 ### Fixed

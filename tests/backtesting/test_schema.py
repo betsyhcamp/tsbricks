@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 from pydantic import ValidationError
 
@@ -256,6 +257,8 @@ def test_model_config_defaults(valid_cfg: dict) -> None:
     cfg = parse_config(config=valid_cfg)
 
     assert cfg.model.hyperparameters == {}
+    assert cfg.model.predict_callable is None
+    assert cfg.model.predict_params is None
     assert cfg.model.model_n_jobs is None
     assert cfg.model.serialization is None
 
@@ -904,6 +907,111 @@ def test_normalized_dates_no_warning(valid_cfg: dict) -> None:
 
     with warnings.catch_warnings():
         warnings.filterwarnings("error", category=UserWarning)
+        parse_config(config=valid_cfg)
+
+
+# ---- ModelConfig predict fields ----
+
+
+def test_model_config_predict_fields_round_trip(valid_cfg: dict) -> None:
+    """predict_callable and predict_params survive parse_config()."""
+    predict_path = "tsbricks._testing.dummy_models.predict_only"
+    valid_cfg["model"]["predict_callable"] = predict_path
+    valid_cfg["model"]["predict_params"] = {"level": [80, 95]}
+
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.model.predict_callable == predict_path
+    assert cfg.model.predict_params == {"level": [80, 95]}
+
+
+def test_model_config_without_predict_fields_parses(valid_cfg: dict) -> None:
+    """A config predating the predict fields parses unchanged."""
+    assert "predict_callable" not in valid_cfg["model"]
+    assert "predict_params" not in valid_cfg["model"]
+
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.model.callable == "tsbricks._testing.dummy_models.forecast_only"
+    assert cfg.model.predict_callable is None
+    assert cfg.model.predict_params is None
+
+
+def test_model_config_unresolvable_predict_callable_parses(
+    valid_cfg: dict,
+) -> None:
+    """predict_callable is not imported at parse time (§3.10)."""
+    valid_cfg["model"]["predict_callable"] = "no.such.module.no_such_function"
+
+    cfg = parse_config(config=valid_cfg)
+
+    assert cfg.model.predict_callable == "no.such.module.no_such_function"
+
+
+def test_param_overlap_differing_values_warns(valid_cfg: dict) -> None:
+    """A key in both params dicts with differing values warns at parse time."""
+    valid_cfg["model"]["hyperparameters"] = {"n_jobs": 16}
+    valid_cfg["model"]["predict_params"] = {"n_jobs": 2}
+
+    with pytest.warns(UserWarning, match=r"n_jobs"):
+        parse_config(config=valid_cfg)
+
+
+def test_param_overlap_warning_omits_values(valid_cfg: dict) -> None:
+    """The warning names the overlapping keys but not their values (§3.5)."""
+    valid_cfg["model"]["hyperparameters"] = {"level": [80, 95]}
+    valid_cfg["model"]["predict_params"] = {"level": [50]}
+
+    with pytest.warns(UserWarning) as caught:
+        parse_config(config=valid_cfg)
+
+    message = str(caught[0].message)
+    assert "level" in message
+    assert "hyperparameters" in message
+    assert "[80, 95]" not in message
+    assert "[50]" not in message
+
+
+def test_param_overlap_identical_values_no_warning(valid_cfg: dict) -> None:
+    """Identical values in both params dicts do not warn — the merge is a no-op."""
+    import warnings
+
+    valid_cfg["model"]["hyperparameters"] = {"level": [80, 95]}
+    valid_cfg["model"]["predict_params"] = {"level": [80, 95]}
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", category=UserWarning)
+        parse_config(config=valid_cfg)
+
+
+def test_param_disjoint_keys_no_warning(valid_cfg: dict) -> None:
+    """Keys carried by only one params dict do not warn — no overlap exists."""
+    import warnings
+
+    valid_cfg["model"]["hyperparameters"] = {"num_leaves": 31}
+    valid_cfg["model"]["predict_params"] = {"level": [80, 95]}
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", category=UserWarning)
+        parse_config(config=valid_cfg)
+
+
+def test_param_overlap_uncomparable_values_warns_not_raises(
+    valid_cfg: dict,
+) -> None:
+    """Array-like values warn rather than failing config parsing.
+
+    The two arrays here are equal, so this warning is a false positive:
+    ``bool(array != array)`` is ambiguous, so equality cannot be proven
+    and the value is reported as differing. Warning is the deliberate
+    outcome -- comparing directly would raise inside the validator and
+    Pydantic would surface it as a ValidationError, failing the parse
+    over a diagnostic.
+    """
+    valid_cfg["model"]["hyperparameters"] = {"weights": np.array([1, 2, 3])}
+    valid_cfg["model"]["predict_params"] = {"weights": np.array([1, 2, 3])}
+
+    with pytest.warns(UserWarning, match=r"weights"):
         parse_config(config=valid_cfg)
 
 

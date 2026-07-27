@@ -24,6 +24,22 @@ def _warn_non_normalized_dates(dates: list[str], field_name: str) -> None:
         )
 
 
+def _values_differ(left: Any, right: Any) -> bool:
+    """Report whether two config values differ, without raising.
+
+    Config values are typed ``Any``, so equality may not reduce to a
+    bool: ``numpy`` arrays and ``pandas`` Series return an elementwise
+    result that ``bool()`` rejects as ambiguous. Such values are
+    reported as differing. This backs a diagnostic warning, so a match
+    that cannot be proven is worth mentioning, and a best-effort check
+    must never turn config parsing into a ``ValidationError``.
+    """
+    try:
+        return bool(left != right)
+    except (TypeError, ValueError):
+        return True
+
+
 class ForecastOriginConfig(BaseModel):
     """Per-origin configuration for variable-horizon backtesting."""
 
@@ -249,14 +265,56 @@ class TransformConfig(BaseModel):
 
 
 class ModelConfig(BaseModel):
-    """Model section: callable path and hyperparameters."""
+    """Model section: callable paths and parameters.
+
+    ``callable`` fits **and** forecasts; ``predict_callable`` forecasts
+    from an already-fitted model without refitting. Neither dotted path
+    is imported at parse time -- both resolve at call time.
+
+    ``hyperparameters`` are fit-time and ``predict_params`` predict-time.
+    ``invoke_model`` reads both, since its callable performs both steps;
+    ``invoke_predict`` reads ``predict_params`` only.
+    """
 
     callable: str
     hyperparameters: dict[str, Any] | None = None
+    predict_callable: str | None = None
+    predict_params: dict[str, Any] | None = None
     model_n_jobs: int | None = None
 
     # Out of scope for V1
     serialization: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _warn_on_param_overlap(self) -> ModelConfig:
+        """Warn when the two params dicts disagree about a shared key.
+
+        Overlap is a property of the configuration rather than of any
+        one invocation, so it is reported once here instead of on every
+        resolve. Identical values are silent: the merge is a no-op, so
+        there is nothing to report. Values are omitted from the message
+        since they may be long lists or arbitrary Python objects and
+        for this reason they are compared via ``_values_differ``.
+        """
+        hyperparameters = self.hyperparameters or {}
+        predict_params = self.predict_params or {}
+
+        conflicting = sorted(
+            key
+            for key in hyperparameters.keys() & predict_params.keys()
+            if _values_differ(hyperparameters[key], predict_params[key])
+        )
+        if conflicting:
+            warnings.warn(
+                f"model.hyperparameters and model.predict_params both set "
+                f"{conflicting} to differing values. hyperparameters governs "
+                f"the combined fit-and-forecast call (model.callable); "
+                f"predict_params governs the predict-only call "
+                f"(model.predict_callable).",
+                UserWarning,
+                stacklevel=2,
+            )
+        return self
 
 
 class ParamResolverConfig(BaseModel):
