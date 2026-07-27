@@ -30,3 +30,13 @@ def test_resolve_predict_is_public_api() -> None:
 
     assert exported is resolve_predict
     assert "resolve_predict" in tsbricks.runner.__all__
+
+
+def test_invoke_predict_is_public_api() -> None:
+    """invoke_predict is exported from the tsbricks.runner namespace."""
+    import tsbricks.runner
+    from tsbricks.runner import invoke_predict as exported
+    from tsbricks.runner.model_invocation import invoke_predict
+
+    assert exported is invoke_predict
+    assert "invoke_predict" in tsbricks.runner.__all__

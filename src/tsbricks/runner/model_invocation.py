@@ -145,7 +145,78 @@ def invoke_model(
         if len(result) == 3:
             return result[0], result[1], result[2]
 
+    # Message skeleton shared with invoke_predict, kept parallel by
+    # convention rather than a helper:
+    #   <Role> callable '<dotted path>' must return <legal shape>, got <type>
+    # Editing one should prompt an edit to the other. The engine collects
+    # per-fold failures into run_summary["errors"], so this text is read
+    # detached from its call site and must name the offending callable.
     raise TypeError(
-        f"Model callable must return a DataFrame or a tuple of length 2-3, "
-        f"got {type(result).__name__}"
+        f"Model callable '{model_config.callable}' must return a DataFrame "
+        f"or a tuple of length 2-3, got {type(result).__name__}"
     )
+
+
+def invoke_predict(
+    fitted_model: Any,
+    model_config: Any,
+    horizon: int,
+    future_x_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Run a model's predict-only callable against an already-fitted model.
+
+    Mirrors ``invoke_model()``'s resolve-and-call shape for the
+    predict-only half. The model is never refit, and never inspected or
+    assumed to have a particular shape by this function.
+
+    ``hyperparameters`` are deliberately not forwarded: they are
+    fit-time and already baked into the fitted object, and passing
+    e.g. ``num_leaves=31`` to a predict callable would raise
+    ``TypeError``. Predict-time parameters travel in ``predict_params``.
+
+    The return is a bare DataFrame rather than ``invoke_model``'s
+    3-tuple, because predicting produces a forecast and nothing else --
+    no fitted values, no new model object. A callable emitting
+    prediction intervals still returns one DataFrame, with extra
+    columns.
+
+    Args:
+        fitted_model: An already-fitted model object.
+        model_config: Config object with ``predict_callable`` and
+            optionally ``predict_params``.
+        horizon: Number of forecast steps.
+        future_x_df: Optional future exogenous DataFrame. If provided,
+            passed as a keyword argument to the predict callable,
+            overriding any ``future_x_df`` key in ``predict_params``.
+
+    Returns:
+        The predict callable's forecast DataFrame.
+
+    Raises:
+        ValueError: If ``model_config.predict_callable`` is absent or
+            ``None``, or if ``predict_params`` contains ``horizon``.
+        TypeError: If the predict callable does not return a DataFrame.
+
+    .. note:: This function does not capture warnings internally.
+       See ``PACKAGE_MAINTAINER_SPEC.md`` §9 for warning capture patterns.
+    """
+    predict_fn, predict_params = resolve_predict(model_config)
+
+    kwargs: dict[str, Any] = {**predict_params}
+    if future_x_df is not None:
+        kwargs["future_x_df"] = future_x_df
+
+    result = predict_fn(fitted_model, horizon, **kwargs)
+
+    # Deliberate assertion, not dispatch: invoke_model inspects the shape
+    # because it must normalize 1/2/3-tuples, but there is nothing to
+    # dispatch on here. The realistic authoring mistake is pointing
+    # predict_callable at a fit callable, whose (forecast, fitted) tuple
+    # would otherwise travel into scoring and fail somewhere unrelated.
+    if not isinstance(result, pd.DataFrame):
+        raise TypeError(
+            f"Predict callable '{model_config.predict_callable}' must return "
+            f"a DataFrame, got {type(result).__name__}"
+        )
+
+    return result

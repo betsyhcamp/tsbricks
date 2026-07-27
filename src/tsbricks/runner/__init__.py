@@ -1,5 +1,6 @@
 from tsbricks.runner.model_invocation import (
     invoke_model,
+    invoke_predict,
     resolve_model,
     resolve_predict,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "resolve_model",
     "resolve_predict",
     "invoke_model",
+    "invoke_predict",
     "capture_warnings",
     "format_warnings",
     "dynamic_import",

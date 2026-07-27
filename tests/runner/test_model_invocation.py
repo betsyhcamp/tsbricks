@@ -7,6 +7,7 @@ import pytest
 
 from tsbricks.runner.model_invocation import (
     invoke_model,
+    invoke_predict,
     resolve_model,
     resolve_predict,
 )
@@ -288,7 +289,7 @@ def test_invoke_invalid_return_type_raises(panel_df: pd.DataFrame) -> None:
     """Model returning an unexpected type raises TypeError."""
     cfg = _ModelConfig(callable="tsbricks._testing.dummy_models.returns_int")
 
-    with pytest.raises(TypeError, match="Model callable must return"):
+    with pytest.raises(TypeError, match=r"Model callable .* must return"):
         invoke_model(panel_df, cfg, horizon=3)
 
 
@@ -296,7 +297,7 @@ def test_invoke_tuple_of_one_raises(panel_df: pd.DataFrame) -> None:
     """Model returning a 1-tuple raises TypeError."""
     cfg = _ModelConfig(callable="tsbricks._testing.dummy_models.returns_tuple_of_one")
 
-    with pytest.raises(TypeError, match="Model callable must return"):
+    with pytest.raises(TypeError, match=r"Model callable .* must return"):
         invoke_model(panel_df, cfg, horizon=3)
 
 
@@ -304,5 +305,187 @@ def test_invoke_tuple_of_four_raises(panel_df: pd.DataFrame) -> None:
     """Model returning a 4-tuple raises TypeError."""
     cfg = _ModelConfig(callable="tsbricks._testing.dummy_models.returns_tuple_of_four")
 
-    with pytest.raises(TypeError, match="Model callable must return"):
+    with pytest.raises(TypeError, match=r"Model callable .* must return"):
         invoke_model(panel_df, cfg, horizon=3)
+
+
+def test_invoke_model_error_names_the_callable(panel_df: pd.DataFrame) -> None:
+    """The TypeError names the dotted path that misbehaved.
+
+    The engine collects per-fold failures into run_summary["errors"], so
+    this message is read detached from its call site; a user looping over
+    several model configs has no other way to tell which one failed.
+    """
+    cfg = _ModelConfig(callable="tsbricks._testing.dummy_models.returns_int")
+
+    with pytest.raises(TypeError) as excinfo:
+        invoke_model(panel_df, cfg, horizon=3)
+
+    assert "tsbricks._testing.dummy_models.returns_int" in str(excinfo.value)
+
+
+def test_invoke_model_ignores_predict_callable(panel_df: pd.DataFrame) -> None:
+    """A config carrying predict_callable behaves identically to one without."""
+    without = _ModelConfig(callable=_FORECAST_ONLY)
+    with_predict = _ModelConfig(
+        callable=_FORECAST_ONLY,
+        predict_callable=_PREDICT_ONLY,
+    )
+
+    baseline, _, _ = invoke_model(panel_df, without, horizon=3)
+    result, _, _ = invoke_model(panel_df, with_predict, horizon=3)
+
+    pd.testing.assert_frame_equal(result, baseline)
+
+
+def test_invoke_model_forwards_predict_params(panel_df: pd.DataFrame) -> None:
+    """predict_params reach the fit-and-forecast callable too.
+
+    model_config.callable performs a predict step, so it needs
+    predict-time parameters. Declared once, both entrypoints emit the
+    same product -- the train/serve skew this channel exists to avoid.
+    """
+    cfg = _ModelConfig(
+        callable="tsbricks._testing.dummy_models.forecast_fitted_and_model",
+        hyperparameters={"num_leaves": 31},
+        predict_params={"level": [80, 95]},
+    )
+    _, _, model_obj = invoke_model(panel_df, cfg, horizon=3)
+
+    assert model_obj["hyperparameters"]["level"] == [80, 95]
+    assert model_obj["hyperparameters"]["num_leaves"] == 31
+
+
+def test_invoke_model_hyperparameters_win_at_the_callable(
+    panel_df: pd.DataFrame,
+) -> None:
+    """On overlap it is the hyperparameters value that reaches the callable."""
+    cfg = _ModelConfig(
+        callable="tsbricks._testing.dummy_models.forecast_fitted_and_model",
+        hyperparameters={"n_jobs": 16},
+        predict_params={"n_jobs": 2},
+    )
+    _, _, model_obj = invoke_model(panel_df, cfg, horizon=3)
+
+    assert model_obj["hyperparameters"]["n_jobs"] == 16
+
+
+# ---- invoke_predict ----
+
+
+def _predict_cfg(**overrides: object) -> _ModelConfig:
+    """Config pointing predict_callable at the echoing test double."""
+    kwargs: dict = {
+        "callable": _FORECAST_ONLY,
+        "predict_callable": _PREDICT_ONLY,
+    }
+    kwargs.update(overrides)
+    return _ModelConfig(**kwargs)
+
+
+def test_invoke_predict_resolves_and_calls() -> None:
+    """fitted_model lands in slot 1 and horizon in slot 2, by identity."""
+    model = {"name": "already-fitted"}
+
+    out = invoke_predict(model, _predict_cfg(), horizon=3)
+
+    assert isinstance(out, pd.DataFrame)
+    assert out["fitted_model"].iloc[0] is model
+    assert out["horizon"].iloc[0] == 3
+
+
+def test_invoke_predict_omits_future_x_df_when_not_supplied() -> None:
+    """future_x_df is absent from kwargs entirely, not passed as None.
+
+    The double reports ``"future_x_df" in kwargs``, so this distinguishes
+    omission from an explicit None -- a named ``future_x_df=None``
+    parameter on the callable would collapse the two.
+    """
+    out = invoke_predict({"name": "m"}, _predict_cfg(), horizon=3)
+
+    # Truthiness, not `is False`: pandas stores this as numpy.bool_, and
+    # np.False_ is not the Python False singleton.
+    assert not out["has_future_x_df"].iloc[0]
+    assert out["kwargs"].iloc[0] == {}
+
+
+def test_invoke_predict_forwards_future_x_df() -> None:
+    """A supplied future_x_df reaches the callable unchanged."""
+    future_x = pd.DataFrame({"ds": [1], "unique_id": ["A"], "price": [9.99]})
+
+    out = invoke_predict({"name": "m"}, _predict_cfg(), horizon=3, future_x_df=future_x)
+
+    assert out["has_future_x_df"].iloc[0]
+    assert out["kwargs"].iloc[0]["future_x_df"] is future_x
+
+
+def test_invoke_predict_forwards_predict_params() -> None:
+    """predict_params keys are forwarded to the predict callable."""
+    cfg = _predict_cfg(predict_params={"level": [80, 95]})
+
+    out = invoke_predict({"name": "m"}, cfg, horizon=3)
+
+    assert out["kwargs"].iloc[0]["level"] == [80, 95]
+
+
+def test_invoke_predict_argument_beats_predict_params_future_x_df() -> None:
+    """A caller-supplied future_x_df overrides one in predict_params."""
+    from_config = pd.DataFrame({"ds": [1], "unique_id": ["A"], "price": [1.0]})
+    from_caller = pd.DataFrame({"ds": [2], "unique_id": ["B"], "price": [2.0]})
+    cfg = _predict_cfg(predict_params={"future_x_df": from_config})
+
+    out = invoke_predict({"name": "m"}, cfg, horizon=3, future_x_df=from_caller)
+
+    assert out["kwargs"].iloc[0]["future_x_df"] is from_caller
+
+
+def test_invoke_predict_ignores_hyperparameters() -> None:
+    """Fit-time hyperparameters never reach the predict callable.
+
+    They are baked into the fitted object; forwarding them would pass
+    e.g. num_leaves=31 to a predict function and raise TypeError.
+    """
+    cfg = _predict_cfg(
+        hyperparameters={"num_leaves": 31},
+        predict_params={"level": [80, 95]},
+    )
+
+    out = invoke_predict({"name": "m"}, cfg, horizon=3)
+
+    assert out["kwargs"].iloc[0] == {"level": [80, 95]}
+    assert "num_leaves" not in out["kwargs"].iloc[0]
+
+
+def test_invoke_predict_invalid_return_type_raises() -> None:
+    """A non-DataFrame return raises TypeError naming the predict callable."""
+    path = "tsbricks._testing.dummy_models.predict_returns_int"
+    cfg = _predict_cfg(predict_callable=path)
+
+    with pytest.raises(TypeError, match=r"Predict callable .* must return") as excinfo:
+        invoke_predict({"name": "m"}, cfg, horizon=3)
+
+    assert path in str(excinfo.value)
+
+
+def test_invoke_predict_missing_predict_callable_raises() -> None:
+    """A config without predict_callable raises ValueError from the resolver."""
+    cfg = _ModelConfig(callable=_FORECAST_ONLY)
+
+    with pytest.raises(ValueError, match="no 'predict_callable'"):
+        invoke_predict({"name": "m"}, cfg, horizon=3)
+
+
+def test_invoke_predict_all_arguments_positional() -> None:
+    """A fully positional call works which is the argument order is contract.
+
+    Distinct from test_invoke_predict_resolves_and_calls, which passes
+    horizon as a keyword. This pins horizon's *position* and also the
+    regression test for callers using functools.partial.
+    """
+    model = {"name": "already-fitted"}
+
+    out = invoke_predict(model, _predict_cfg(), 3)
+
+    assert isinstance(out, pd.DataFrame)
+    assert out["fitted_model"].iloc[0] is model
+    assert out["horizon"].iloc[0] == 3
