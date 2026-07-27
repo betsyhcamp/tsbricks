@@ -8,13 +8,13 @@ Time series forecasting building blocks and a configuration-driven backtesting s
 
 ## Overview
 
-`tsbricks` provides reusable forecasting primitives (metrics, transforms, diagnostics, data I/O), shared orchestration (transform pipelines, model invocation, serialization), and a YAML-driven backtesting engine. It is model-agnostic, designed for use within Vertex AI pipelines, notebook instances, and local development.
+`tsbricks` provides reusable forecasting primitives (metrics, transforms, diagnostics, data I/O), shared orchestration (transform pipelines, model invocation, dynamic import), and a YAML-driven backtesting engine. It is model-agnostic, designed for use within Vertex AI pipelines, notebook instances, and local development.
 
 The package is organized into three namespaces with a strict one-way dependency rule (`backtesting` → `runner` → `blocks`):
 
 - **`tsbricks.blocks`** — Stateless building blocks: metric callables, transform objects, diagnostics, data I/O, utilities.
-- **`tsbricks.runner`** — Shared orchestration: transform chain execution, model invocation, serialization. Consumed by backtesting and (future) forecasting.
-- **`tsbricks.backtesting`** — Use-case orchestrator: config parsing, fold generation, parallelized evaluation, structured output.
+- **`tsbricks.runner`** — Shared orchestration: transform chain execution, model invocation, dynamic import. Consumed by backtesting and (future) forecasting.
+- **`tsbricks.backtesting`** — Use-case orchestrator: config parsing, fold generation, evaluation, structured output.
 
 ## Installation
 
@@ -56,7 +56,7 @@ from tsbricks.runner import fit_transforms, apply_transforms, inverse_transforms
 
 ## Requirements
 
-- Python 3.11.11
+- Python 3.11 or 3.12
 - [uv](https://github.com/astral-sh/uv)
 - [Task](https://taskfile.dev/)
 
