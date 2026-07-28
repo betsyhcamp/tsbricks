@@ -32,7 +32,7 @@ def _minimal_config() -> dict:
             "forecast_origins": ["2023-01-01", "2023-06-01"],
         },
         "model": {
-            "callable": "tsbricks._testing.dummy_models.forecast_only",
+            "fit_predict_callable": "tsbricks._testing.dummy_models.forecast_only",
         },
         "evaluation": {
             "native": {
@@ -218,7 +218,7 @@ def _integer_ds_config() -> dict:
             "forecast_origins": [10, 15],
         },
         "model": {
-            "callable": "tsbricks._testing.dummy_models.forecast_only",
+            "fit_predict_callable": "tsbricks._testing.dummy_models.forecast_only",
         },
         "evaluation": {
             "native": {
@@ -364,7 +364,7 @@ def _group_scope_config() -> dict:
             "forecast_origins": ["2023-01-01", "2023-06-01"],
         },
         "model": {
-            "callable": "tsbricks._testing.dummy_models.forecast_only",
+            "fit_predict_callable": "tsbricks._testing.dummy_models.forecast_only",
         },
         "evaluation": {
             "native": {
@@ -427,7 +427,7 @@ def _global_scope_config() -> dict:
             "forecast_origins": ["2023-01-01", "2023-06-01"],
         },
         "model": {
-            "callable": "tsbricks._testing.dummy_models.forecast_only",
+            "fit_predict_callable": "tsbricks._testing.dummy_models.forecast_only",
         },
         "evaluation": {
             "native": {
@@ -569,7 +569,7 @@ def _variable_horizon_config() -> dict:
             ],
         },
         "model": {
-            "callable": ("tsbricks._testing.dummy_models.forecast_only"),
+            "fit_predict_callable": ("tsbricks._testing.dummy_models.forecast_only"),
         },
         "evaluation": {
             "native": {
@@ -667,7 +667,7 @@ def _aggregated_only_config() -> dict:
             "forecast_origins": ["2023-01-01", "2023-06-01"],
         },
         "model": {
-            "callable": ("tsbricks._testing.dummy_models.forecast_only"),
+            "fit_predict_callable": ("tsbricks._testing.dummy_models.forecast_only"),
         },
         "evaluation": {
             "aggregated": {
@@ -773,7 +773,7 @@ def _both_native_and_aggregated_config() -> dict:
             "forecast_origins": ["2023-01-01", "2023-06-01"],
         },
         "model": {
-            "callable": ("tsbricks._testing.dummy_models.forecast_only"),
+            "fit_predict_callable": ("tsbricks._testing.dummy_models.forecast_only"),
         },
         "evaluation": {
             "native": {
@@ -817,7 +817,7 @@ def _aggregated_only_with_quarter_config() -> dict:
             "forecast_origins": ["2023-01-01", "2023-06-01"],
         },
         "model": {
-            "callable": ("tsbricks._testing.dummy_models.forecast_only"),
+            "fit_predict_callable": ("tsbricks._testing.dummy_models.forecast_only"),
         },
         "evaluation": {
             "aggregated": {

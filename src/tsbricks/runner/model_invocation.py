@@ -10,10 +10,10 @@ from tsbricks.runner.utils import dynamic_import
 def resolve_model(model_config: Any) -> tuple[Any, dict]:
     """Resolve a model callable and its config-derived kwargs.
 
-    Dynamically imports ``model_config.callable`` and merges the
-    fit-step and forecast-step parameters into a single kwargs dict.
-    ``model_config.callable`` fits **and** forecasts, so it needs
-    predict-time parameters as well as fit-time ones.
+    Dynamically imports ``model_config.fit_predict_callable`` and merges
+    the fit-step and forecast-step parameters into a single kwargs dict.
+    That callable fits **and** forecasts, so it needs predict-time
+    parameters as well as fit-time ones.
 
     ``hyperparameters`` wins on overlap: the fit-step declaration
     governs the combined call. The overlap itself is reported at
@@ -21,7 +21,8 @@ def resolve_model(model_config: Any) -> tuple[Any, dict]:
     configuration rather than of any one invocation.
 
     Args:
-        model_config: Config object with at least ``callable: str`` and
+        model_config: Config object with at least
+            ``fit_predict_callable: str`` and
             ``hyperparameters: dict | None``, and optionally
             ``predict_params: dict | None``.
 
@@ -49,7 +50,7 @@ def resolve_model(model_config: Any) -> tuple[Any, dict]:
                 f"collides with the positional horizon argument."
             )
 
-    model_fn = dynamic_import(model_config.callable)
+    model_fn = dynamic_import(model_config.fit_predict_callable)
     return model_fn, {**predict_params, **hyperparameters}
 
 
@@ -115,7 +116,7 @@ def invoke_model(
 
     Args:
         train_df: Training panel DataFrame.
-        model_config: Config object with ``callable`` and
+        model_config: Config object with ``fit_predict_callable`` and
             ``hyperparameters``, and optionally ``predict_params``.
         horizon: Number of forecast steps.
         future_x_df: Optional future exogenous DataFrame. If provided,
@@ -152,8 +153,8 @@ def invoke_model(
     # per-fold failures into run_summary["errors"], so this text is read
     # detached from its call site and must name the offending callable.
     raise TypeError(
-        f"Model callable '{model_config.callable}' must return a DataFrame "
-        f"or a tuple of length 2-3, got {type(result).__name__}"
+        f"Model callable '{model_config.fit_predict_callable}' must return "
+        f"a DataFrame or a tuple of length 2-3, got {type(result).__name__}"
     )
 
 

@@ -14,6 +14,7 @@ from tsbricks.backtesting.schema import (
     ForecastOriginConfig,
     MetricDefinitionConfig,
     MetricsConfig,
+    ModelConfig,
     ParamResolverConfig,
     parse_config,
 )
@@ -58,7 +59,9 @@ def test_parse_valid_dict_model_section(valid_cfg: dict) -> None:
     """Valid dict parses model section correctly."""
     cfg = parse_config(config=valid_cfg)
 
-    assert cfg.model.callable == "tsbricks._testing.dummy_models.forecast_only"
+    assert (
+        cfg.model.fit_predict_callable == "tsbricks._testing.dummy_models.forecast_only"
+    )
 
 
 def test_parse_valid_dict_metrics_section(valid_cfg: dict) -> None:
@@ -361,8 +364,8 @@ def test_missing_cross_validation_raises(valid_cfg: dict) -> None:
 
 
 def test_missing_model_callable_raises(valid_cfg: dict) -> None:
-    """Missing model.callable raises ValidationError."""
-    del valid_cfg["model"]["callable"]
+    """Missing model.fit_predict_callable raises ValidationError."""
+    del valid_cfg["model"]["fit_predict_callable"]
 
     with pytest.raises(ValidationError):
         parse_config(config=valid_cfg)
@@ -909,6 +912,23 @@ def test_normalized_dates_no_warning(valid_cfg: dict) -> None:
         parse_config(config=valid_cfg)
 
 
+# ---- ModelConfig field naming ----
+
+
+def test_model_config_rejects_old_callable_key() -> None:
+    """The pre-0.4.0 ``callable`` key is not accepted -- no alias, no shim.
+
+    This is the only test pinning that decision. Every other test in the
+    suite exercises the *new* name and would pass just as well if someone
+    later added the compatibility alias or property the rename spec
+    rejects. A Pydantic alias in particular would look like a kindness
+    while still leaving ``cfg.model.callable`` raising AttributeError for
+    duck-typed and Python-constructed configs.
+    """
+    with pytest.raises(ValidationError, match="fit_predict_callable"):
+        ModelConfig(**{"callable": "tsbricks._testing.dummy_models.forecast_only"})
+
+
 # ---- ModelConfig predict fields ----
 
 
@@ -931,7 +951,9 @@ def test_model_config_without_predict_fields_parses(valid_cfg: dict) -> None:
 
     cfg = parse_config(config=valid_cfg)
 
-    assert cfg.model.callable == "tsbricks._testing.dummy_models.forecast_only"
+    assert (
+        cfg.model.fit_predict_callable == "tsbricks._testing.dummy_models.forecast_only"
+    )
     assert cfg.model.predict_callable is None
     assert cfg.model.predict_params is None
 

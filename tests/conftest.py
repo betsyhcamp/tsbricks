@@ -80,7 +80,7 @@ def valid_cfg() -> dict:
             }
         ],
         "model": {
-            "callable": "tsbricks._testing.dummy_models.forecast_only",
+            "fit_predict_callable": "tsbricks._testing.dummy_models.forecast_only",
             "hyperparameters": {},
         },
         "evaluation": {

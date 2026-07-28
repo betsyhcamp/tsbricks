@@ -267,16 +267,17 @@ class TransformConfig(BaseModel):
 class ModelConfig(BaseModel):
     """Model section: callable paths and parameters.
 
-    ``callable`` fits **and** forecasts; ``predict_callable`` forecasts
-    from an already-fitted model without refitting. Neither dotted path
-    is imported at parse time -- both resolve at call time.
+    ``fit_predict_callable`` fits **and** forecasts, which is what its
+    name records; ``predict_callable`` forecasts from an already-fitted
+    model without refitting. Neither dotted path is imported at parse
+    time -- both resolve at call time.
 
     ``hyperparameters`` are fit-time and ``predict_params`` predict-time.
     ``invoke_model`` reads both, since its callable performs both steps;
     ``invoke_predict`` reads ``predict_params`` only.
     """
 
-    callable: str
+    fit_predict_callable: str
     hyperparameters: dict[str, Any] | None = None
     predict_callable: str | None = None
     predict_params: dict[str, Any] | None = None
@@ -307,7 +308,8 @@ class ModelConfig(BaseModel):
             warnings.warn(
                 f"model.hyperparameters and model.predict_params both set "
                 f"{conflicting} to differing values. hyperparameters governs "
-                f"the combined fit-and-forecast call (model.callable); "
+                f"the combined fit-and-forecast call "
+                f"(model.fit_predict_callable); "
                 f"predict_params governs the predict-only call "
                 f"(model.predict_callable).",
                 UserWarning,
