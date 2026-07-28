@@ -7,6 +7,8 @@ and this project adheres to **Semantic Versioning** (https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-27
+
 ### Added
 
 - **`invoke_predict`** — Predict-only counterpart to `invoke_model`. Runs a model's forecast step against an already-fitted model object without refitting, returning the forecast DataFrame (`tsbricks.runner.invoke_predict`). Signature is `invoke_predict(fitted_model, model_config, horizon, future_x_df=None)` which is the same as `invoke_model` except that `train_df` becomes `fitted_model`.
@@ -126,4 +128,6 @@ Guidelines:
 [0.1.0]: https://github.com/betsyhcamp/tsbricks/releases/tag/v0.1.0
 [0.2.0]: https://github.com/betsyhcamp/tsbricks/releases/tag/v0.2.0
 [0.3.0]: https://github.com/betsyhcamp/tsbricks/releases/tag/v0.3.0
-[unreleased]: https://github.com/betsyhcamp/tsbricks/compare/v0.3.0...HEAD
+[0.3.1]: https://github.com/betsyhcamp/tsbricks/releases/tag/v0.3.1
+[0.4.0]: https://github.com/betsyhcamp/tsbricks/releases/tag/v0.4.0
+[unreleased]: https://github.com/betsyhcamp/tsbricks/compare/v0.4.0...HEAD
