@@ -17,6 +17,7 @@ resolution or injected a fake, so the real path never executed.
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from tsbricks.backtesting.schema import ModelConfig
 from tsbricks.runner import invoke_predict
@@ -30,7 +31,7 @@ def test_invoke_predict_with_real_model_config() -> None:
     by identity, the horizon, and the predict_params the config declared.
     """
     model_config = ModelConfig(
-        callable="tsbricks._testing.dummy_models.forecast_only",
+        fit_predict_callable="tsbricks._testing.dummy_models.forecast_only",
         hyperparameters={"num_leaves": 31},
         predict_callable="tsbricks._testing.dummy_models.predict_only",
         predict_params={"level": [80, 95]},
@@ -53,26 +54,20 @@ def test_invoke_predict_with_real_model_config() -> None:
     assert "num_leaves" not in kwargs
 
 
-# TODO (human): add the failure-path counterpart to the test above --
-# test_invoke_predict_real_config_without_predict_callable.
-#
-# Build a real ModelConfig that sets `callable` but omits predict_callable
-# entirely, call invoke_predict, and assert it raises ValueError. Reuse the
-# `match=` anchor from tests/runner/ ("no 'predict_callable'").
-#
-# The thing worth noticing while you write it -- it is why this test is
-# worth having at the integration level and not only in tests/runner/:
-#
-# The guard in resolve_predict is
-#     getattr(model_config, "predict_callable", None)
-# and it collapses TWO different situations into one error. But a Pydantic
-# ModelConfig can only ever be in ONE of them. Because the field is declared
-# with a `= None` default, the attribute ALWAYS exists on a real config --
-# so the getattr default is unreachable here, and only the `is None` branch
-# can fire. The other branch (attribute genuinely absent) is reachable only
-# by duck-typed configs, which is what _LegacyModelConfig covers in
-# tests/runner/.
-#
-# So the two tests exercise the same guard through different doors. Neither
-# subsumes the other, and a reader who assumes this one is redundant with
-# test_resolve_predict_missing_attribute_raises_same_error has it backwards.
+def test_invoke_predict_real_config_without_predict_callable() -> None:
+    """A real ModelConfig omitting predict_callable raises ValueError.
+
+    The config is valid -- predict_callable defaults to None, so Pydantic
+    raises nothing; only resolve_predict complains, and only when called.
+    See test_resolve_predict_missing_attribute_raises_same_error in
+    tests/runner/ for the duck-typed counterpart.
+    """
+    model_config = ModelConfig(
+        fit_predict_callable="tsbricks._testing.dummy_models.forecast_only",
+        hyperparameters={"num_leaves": 31},
+        predict_params={"level": [80, 95]},
+    )
+    fitted_model = {"name": "already-fitted"}
+
+    with pytest.raises(ValueError, match="model_config has no 'predict_callable'"):
+        invoke_predict(fitted_model, model_config, horizon=6)

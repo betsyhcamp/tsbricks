@@ -27,7 +27,7 @@ from tsbricks.runner.model_invocation import (
 class _ModelConfig:
     """Minimal stand-in for ModelConfig used in tests."""
 
-    callable: str
+    fit_predict_callable: str
     hyperparameters: dict | None = field(default=None)
     predict_callable: str | None = field(default=None)
     predict_params: dict | None = field(default=None)
@@ -41,7 +41,7 @@ class _LegacyModelConfig:
     all, which is why both resolvers reach for them with ``getattr``.
     """
 
-    callable: str
+    fit_predict_callable: str
     hyperparameters: dict | None = field(default=None)
 
 
@@ -55,7 +55,7 @@ _FORECAST_ONLY = "tsbricks._testing.dummy_models.forecast_only"
 def test_resolve_model_returns_callable_and_params() -> None:
     """resolve_model returns the imported callable and hyperparameters dict."""
     cfg = _ModelConfig(
-        callable="tsbricks._testing.dummy_models.forecast_only",
+        fit_predict_callable="tsbricks._testing.dummy_models.forecast_only",
         hyperparameters={"season_length": 12},
     )
     model_fn, params = resolve_model(cfg)
@@ -67,7 +67,7 @@ def test_resolve_model_returns_callable_and_params() -> None:
 def test_resolve_model_none_hyperparameters() -> None:
     """None hyperparameters normalises to empty dict."""
     cfg = _ModelConfig(
-        callable="tsbricks._testing.dummy_models.forecast_only",
+        fit_predict_callable="tsbricks._testing.dummy_models.forecast_only",
         hyperparameters=None,
     )
     _, params = resolve_model(cfg)
@@ -78,7 +78,7 @@ def test_resolve_model_none_hyperparameters() -> None:
 def test_resolve_model_merges_predict_params() -> None:
     """predict_params are merged under hyperparameters into one kwargs dict."""
     cfg = _ModelConfig(
-        callable=_FORECAST_ONLY,
+        fit_predict_callable=_FORECAST_ONLY,
         hyperparameters={"num_leaves": 31},
         predict_params={"level": [80, 95]},
     )
@@ -98,7 +98,7 @@ def test_resolve_model_hyperparameters_win_on_overlap() -> None:
     import warnings
 
     cfg = _ModelConfig(
-        callable=_FORECAST_ONLY,
+        fit_predict_callable=_FORECAST_ONLY,
         hyperparameters={"n_jobs": 16},
         predict_params={"n_jobs": 2},
     )
@@ -113,7 +113,7 @@ def test_resolve_model_hyperparameters_win_on_overlap() -> None:
 def test_resolve_model_without_predict_params_attribute() -> None:
     """A config predating predict_params resolves via the getattr path."""
     cfg = _LegacyModelConfig(
-        callable=_FORECAST_ONLY,
+        fit_predict_callable=_FORECAST_ONLY,
         hyperparameters={"num_leaves": 31},
     )
 
@@ -128,7 +128,9 @@ def test_resolve_model_without_predict_params_attribute() -> None:
 @pytest.mark.parametrize("field_name", ["hyperparameters", "predict_params"])
 def test_resolve_model_horizon_key_raises(field_name: str) -> None:
     """A horizon key in either params dict raises ValueError naming it."""
-    cfg = _ModelConfig(callable=_FORECAST_ONLY, **{field_name: {"horizon": 12}})
+    cfg = _ModelConfig(
+        fit_predict_callable=_FORECAST_ONLY, **{field_name: {"horizon": 12}}
+    )
 
     with pytest.raises(ValueError, match=rf"model_config\.{field_name}.*horizon"):
         resolve_model(cfg)
@@ -140,7 +142,7 @@ def test_resolve_model_horizon_key_raises(field_name: str) -> None:
 def test_resolve_predict_returns_callable_and_params() -> None:
     """resolve_predict returns the imported callable and its predict_params."""
     cfg = _ModelConfig(
-        callable=_FORECAST_ONLY,
+        fit_predict_callable=_FORECAST_ONLY,
         predict_callable=_PREDICT_ONLY,
         predict_params={"level": [80, 95]},
     )
@@ -154,7 +156,7 @@ def test_resolve_predict_returns_callable_and_params() -> None:
 def test_resolve_predict_none_predict_params() -> None:
     """None predict_params normalises to an empty dict."""
     cfg = _ModelConfig(
-        callable=_FORECAST_ONLY,
+        fit_predict_callable=_FORECAST_ONLY,
         predict_callable=_PREDICT_ONLY,
         predict_params=None,
     )
@@ -165,7 +167,7 @@ def test_resolve_predict_none_predict_params() -> None:
 
 def test_resolve_predict_none_callable_raises() -> None:
     """predict_callable=None raises ValueError with an actionable remedy."""
-    cfg = _ModelConfig(callable=_FORECAST_ONLY, predict_callable=None)
+    cfg = _ModelConfig(fit_predict_callable=_FORECAST_ONLY, predict_callable=None)
 
     with pytest.raises(ValueError, match="no 'predict_callable'"):
         resolve_predict(cfg)
@@ -180,7 +182,7 @@ def test_resolve_predict_missing_attribute_raises_same_error() -> None:
     is absent or None. Direct access would raise AttributeError here and
     ValueError in the test above.
     """
-    cfg = _LegacyModelConfig(callable=_FORECAST_ONLY)
+    cfg = _LegacyModelConfig(fit_predict_callable=_FORECAST_ONLY)
 
     assert not hasattr(cfg, "predict_callable")
 
@@ -191,7 +193,7 @@ def test_resolve_predict_missing_attribute_raises_same_error() -> None:
 def test_resolve_predict_horizon_key_raises() -> None:
     """A horizon key in predict_params raises ValueError."""
     cfg = _ModelConfig(
-        callable=_FORECAST_ONLY,
+        fit_predict_callable=_FORECAST_ONLY,
         predict_callable=_PREDICT_ONLY,
         predict_params={"horizon": 12},
     )
@@ -207,7 +209,7 @@ def test_resolve_predict_returns_a_copy() -> None:
     # config.
 
     cfg = _ModelConfig(
-        callable=_FORECAST_ONLY,
+        fit_predict_callable=_FORECAST_ONLY,
         predict_callable=_PREDICT_ONLY,
         predict_params={"level": [80, 95]},
     )
@@ -228,7 +230,9 @@ def test_resolve_predict_returns_a_copy() -> None:
 
 def test_invoke_dataframe_only(panel_df: pd.DataFrame) -> None:
     """Model returning DataFrame → (forecast, None, None)."""
-    cfg = _ModelConfig(callable="tsbricks._testing.dummy_models.forecast_only")
+    cfg = _ModelConfig(
+        fit_predict_callable="tsbricks._testing.dummy_models.forecast_only"
+    )
     forecast, fitted, model_obj = invoke_model(panel_df, cfg, horizon=3)
 
     assert isinstance(forecast, pd.DataFrame)
@@ -240,7 +244,9 @@ def test_invoke_dataframe_only(panel_df: pd.DataFrame) -> None:
 
 def test_invoke_tuple_of_two(panel_df: pd.DataFrame) -> None:
     """Model returning (forecast, fitted) → (forecast, fitted, None)."""
-    cfg = _ModelConfig(callable="tsbricks._testing.dummy_models.forecast_and_fitted")
+    cfg = _ModelConfig(
+        fit_predict_callable="tsbricks._testing.dummy_models.forecast_and_fitted"
+    )
     forecast, fitted, model_obj = invoke_model(panel_df, cfg, horizon=3)
 
     assert isinstance(forecast, pd.DataFrame)
@@ -252,7 +258,7 @@ def test_invoke_tuple_of_two(panel_df: pd.DataFrame) -> None:
 def test_invoke_tuple_of_three(panel_df: pd.DataFrame) -> None:
     """Model returning (forecast, fitted, model_object) → all three."""
     cfg = _ModelConfig(
-        callable="tsbricks._testing.dummy_models.forecast_fitted_and_model"
+        fit_predict_callable="tsbricks._testing.dummy_models.forecast_fitted_and_model"
     )
     forecast, fitted, model_obj = invoke_model(panel_df, cfg, horizon=3)
 
@@ -265,7 +271,7 @@ def test_invoke_tuple_of_three(panel_df: pd.DataFrame) -> None:
 def test_invoke_passes_hyperparameters(panel_df: pd.DataFrame) -> None:
     """Hyperparameters from config are forwarded to the model callable."""
     cfg = _ModelConfig(
-        callable="tsbricks._testing.dummy_models.forecast_fitted_and_model",
+        fit_predict_callable="tsbricks._testing.dummy_models.forecast_fitted_and_model",
         hyperparameters={"alpha": 0.5},
     )
     _, _, model_obj = invoke_model(panel_df, cfg, horizon=3)
@@ -276,7 +282,7 @@ def test_invoke_passes_hyperparameters(panel_df: pd.DataFrame) -> None:
 def test_invoke_forwards_future_x_df(panel_df: pd.DataFrame) -> None:
     """future_x_df is forwarded to the model callable as a kwarg."""
     cfg = _ModelConfig(
-        callable="tsbricks._testing.dummy_models.forecast_with_exogenous",
+        fit_predict_callable="tsbricks._testing.dummy_models.forecast_with_exogenous",
     )
     future_x = pd.DataFrame({"ds": [1], "unique_id": ["A"], "price": [9.99]})
     _, _, model_obj = invoke_model(panel_df, cfg, horizon=3, future_x_df=future_x)
@@ -287,7 +293,9 @@ def test_invoke_forwards_future_x_df(panel_df: pd.DataFrame) -> None:
 
 def test_invoke_invalid_return_type_raises(panel_df: pd.DataFrame) -> None:
     """Model returning an unexpected type raises TypeError."""
-    cfg = _ModelConfig(callable="tsbricks._testing.dummy_models.returns_int")
+    cfg = _ModelConfig(
+        fit_predict_callable="tsbricks._testing.dummy_models.returns_int"
+    )
 
     with pytest.raises(TypeError, match=r"Model callable .* must return"):
         invoke_model(panel_df, cfg, horizon=3)
@@ -295,7 +303,9 @@ def test_invoke_invalid_return_type_raises(panel_df: pd.DataFrame) -> None:
 
 def test_invoke_tuple_of_one_raises(panel_df: pd.DataFrame) -> None:
     """Model returning a 1-tuple raises TypeError."""
-    cfg = _ModelConfig(callable="tsbricks._testing.dummy_models.returns_tuple_of_one")
+    cfg = _ModelConfig(
+        fit_predict_callable="tsbricks._testing.dummy_models.returns_tuple_of_one"
+    )
 
     with pytest.raises(TypeError, match=r"Model callable .* must return"):
         invoke_model(panel_df, cfg, horizon=3)
@@ -303,7 +313,9 @@ def test_invoke_tuple_of_one_raises(panel_df: pd.DataFrame) -> None:
 
 def test_invoke_tuple_of_four_raises(panel_df: pd.DataFrame) -> None:
     """Model returning a 4-tuple raises TypeError."""
-    cfg = _ModelConfig(callable="tsbricks._testing.dummy_models.returns_tuple_of_four")
+    cfg = _ModelConfig(
+        fit_predict_callable="tsbricks._testing.dummy_models.returns_tuple_of_four"
+    )
 
     with pytest.raises(TypeError, match=r"Model callable .* must return"):
         invoke_model(panel_df, cfg, horizon=3)
@@ -316,7 +328,9 @@ def test_invoke_model_error_names_the_callable(panel_df: pd.DataFrame) -> None:
     this message is read detached from its call site; a user looping over
     several model configs has no other way to tell which one failed.
     """
-    cfg = _ModelConfig(callable="tsbricks._testing.dummy_models.returns_int")
+    cfg = _ModelConfig(
+        fit_predict_callable="tsbricks._testing.dummy_models.returns_int"
+    )
 
     with pytest.raises(TypeError) as excinfo:
         invoke_model(panel_df, cfg, horizon=3)
@@ -326,9 +340,9 @@ def test_invoke_model_error_names_the_callable(panel_df: pd.DataFrame) -> None:
 
 def test_invoke_model_ignores_predict_callable(panel_df: pd.DataFrame) -> None:
     """A config carrying predict_callable behaves identically to one without."""
-    without = _ModelConfig(callable=_FORECAST_ONLY)
+    without = _ModelConfig(fit_predict_callable=_FORECAST_ONLY)
     with_predict = _ModelConfig(
-        callable=_FORECAST_ONLY,
+        fit_predict_callable=_FORECAST_ONLY,
         predict_callable=_PREDICT_ONLY,
     )
 
@@ -341,12 +355,12 @@ def test_invoke_model_ignores_predict_callable(panel_df: pd.DataFrame) -> None:
 def test_invoke_model_forwards_predict_params(panel_df: pd.DataFrame) -> None:
     """predict_params reach the fit-and-forecast callable too.
 
-    model_config.callable performs a predict step, so it needs
-    predict-time parameters. Declared once, both entrypoints emit the
+    model_config.fit_predict_callable performs a predict step, so it
+    needs predict-time parameters. Declared once, both entrypoints emit the
     same product -- the train/serve skew this channel exists to avoid.
     """
     cfg = _ModelConfig(
-        callable="tsbricks._testing.dummy_models.forecast_fitted_and_model",
+        fit_predict_callable="tsbricks._testing.dummy_models.forecast_fitted_and_model",
         hyperparameters={"num_leaves": 31},
         predict_params={"level": [80, 95]},
     )
@@ -361,7 +375,7 @@ def test_invoke_model_hyperparameters_win_at_the_callable(
 ) -> None:
     """On overlap it is the hyperparameters value that reaches the callable."""
     cfg = _ModelConfig(
-        callable="tsbricks._testing.dummy_models.forecast_fitted_and_model",
+        fit_predict_callable="tsbricks._testing.dummy_models.forecast_fitted_and_model",
         hyperparameters={"n_jobs": 16},
         predict_params={"n_jobs": 2},
     )
@@ -376,7 +390,7 @@ def test_invoke_model_hyperparameters_win_at_the_callable(
 def _predict_cfg(**overrides: object) -> _ModelConfig:
     """Config pointing predict_callable at the echoing test double."""
     kwargs: dict = {
-        "callable": _FORECAST_ONLY,
+        "fit_predict_callable": _FORECAST_ONLY,
         "predict_callable": _PREDICT_ONLY,
     }
     kwargs.update(overrides)
@@ -469,7 +483,7 @@ def test_invoke_predict_invalid_return_type_raises() -> None:
 
 def test_invoke_predict_missing_predict_callable_raises() -> None:
     """A config without predict_callable raises ValueError from the resolver."""
-    cfg = _ModelConfig(callable=_FORECAST_ONLY)
+    cfg = _ModelConfig(fit_predict_callable=_FORECAST_ONLY)
 
     with pytest.raises(ValueError, match="no 'predict_callable'"):
         invoke_predict({"name": "m"}, cfg, horizon=3)

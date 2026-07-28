@@ -17,6 +17,7 @@ and this project adheres to **Semantic Versioning** (https://semver.org/).
 
 ### Changed
 
+- **BREAKING** — **`ModelConfig.callable` renamed to `fit_predict_callable`** — The field fits *and* forecasts; with `predict_callable` beside it the old name was ambiguous, and it shadowed the Python builtin. No alias or shim: a Pydantic alias would accept the old YAML key while leaving `cfg.model.callable` raising `AttributeError`, breaking Python-constructed and duck-typed configs. Every config must rename the key. `MetricDefinitionConfig.callable` and `ParamResolverConfig.callable` are unchanged.
 - **BREAKING** — **`tsbricks.runner._utils` renamed to `tsbricks.runner.utils`** — Hard rename, no compatibility shim. The module contains one function which is now public API. Import `dynamic_import` from `tsbricks.runner` instead.
 - **`invoke_model` forwards `predict_params`** — Its callable fits *and* forecasts, so it needs predict-time parameters too. Configs that do not set `predict_params` are unaffected.
 - **Overlapping keys emit a `UserWarning` at config-parse time** — When `hyperparameters` and `predict_params` both set a key to *differing* values, `ModelConfig` validation names the overlapping keys and states that `hyperparameters` governs the combined fit-and-forecast call. Overlapping keys with identical values are silent so do not warn. The overlap can be deliberate (fit on 16 cores, serve on 2), so this warns rather than raising.

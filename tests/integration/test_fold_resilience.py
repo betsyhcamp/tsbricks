@@ -38,7 +38,7 @@ def _config_with_failing_model() -> dict:
             "forecast_origins": ["2023-01-01", "2023-06-01"],
         },
         "model": {
-            "callable": ("tsbricks._testing.dummy_models.always_fails"),
+            "fit_predict_callable": ("tsbricks._testing.dummy_models.always_fails"),
         },
         "evaluation": {
             "native": {
@@ -66,7 +66,7 @@ def _config_with_working_model() -> dict:
             "forecast_origins": ["2023-01-01", "2023-06-01"],
         },
         "model": {
-            "callable": ("tsbricks._testing.dummy_models.forecast_only"),
+            "fit_predict_callable": ("tsbricks._testing.dummy_models.forecast_only"),
         },
         "evaluation": {
             "native": {
@@ -119,7 +119,9 @@ def test_single_fold_failure_skips_and_continues(monkeypatch):
     import tsbricks._testing.dummy_models as dm
 
     monkeypatch.setattr(dm, "fail_first_fold", fail_first_fold, raising=False)
-    cfg["model"]["callable"] = "tsbricks._testing.dummy_models.fail_first_fold"
+    cfg["model"]["fit_predict_callable"] = (
+        "tsbricks._testing.dummy_models.fail_first_fold"
+    )
 
     with pytest.warns(UserWarning, match="failed and was skipped"):
         results = run_backtest(config=cfg, df=df)
@@ -179,7 +181,9 @@ def test_test_fold_failure_preserves_cv_results(monkeypatch):
     import tsbricks._testing.dummy_models as dm
 
     monkeypatch.setattr(dm, "fail_on_third_call", fail_on_third_call, raising=False)
-    cfg["model"]["callable"] = "tsbricks._testing.dummy_models.fail_on_third_call"
+    cfg["model"]["fit_predict_callable"] = (
+        "tsbricks._testing.dummy_models.fail_on_third_call"
+    )
 
     with pytest.warns(UserWarning, match="Test fold failed and was skipped"):
         results = run_backtest(config=cfg, df=df)
@@ -215,7 +219,9 @@ def _config_with_warning_model() -> dict:
             "forecast_origins": ["2023-01-01", "2023-06-01"],
         },
         "model": {
-            "callable": ("tsbricks._testing.dummy_models.forecast_with_warning"),
+            "fit_predict_callable": (
+                "tsbricks._testing.dummy_models.forecast_with_warning"
+            ),
         },
         "evaluation": {
             "native": {
@@ -287,7 +293,9 @@ def test_fold_error_stage_is_model_when_model_fails(monkeypatch):
     import tsbricks._testing.dummy_models as dm
 
     monkeypatch.setattr(dm, "fail_first_fold_stage", fail_first_fold, raising=False)
-    cfg["model"]["callable"] = "tsbricks._testing.dummy_models.fail_first_fold_stage"
+    cfg["model"]["fit_predict_callable"] = (
+        "tsbricks._testing.dummy_models.fail_first_fold_stage"
+    )
 
     with pytest.warns(UserWarning):
         results = run_backtest(config=cfg, df=df)

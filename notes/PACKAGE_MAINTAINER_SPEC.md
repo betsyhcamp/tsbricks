@@ -313,7 +313,7 @@ The backtesting system's YAML config references callables by import path. There 
 ```yaml
 # User-provided model
 model:
-  callable: my_project.models.auto_arima_forecast
+  fit_predict_callable: my_project.models.auto_arima_forecast
   hyperparameters:
     season_length: 12
   # Optional: how to forecast from an already-fitted model, for invoke_predict.
@@ -324,10 +324,6 @@ model:
 
 # User-provided custom metric
 - callable: my_project.metrics.custom_metric
-
-# User-provided predict-only callable
-model:
-  predict_callable: my_project.models.auto_arima_predict
 ```
 
 `ModelConfig.serialization` accepts a `method:` import path, but **nothing consumes it** — serialization is not implemented (see `spec_forecast_backtest_system_v1.md` Appendix A). A config supplying it parses and is then ignored.
