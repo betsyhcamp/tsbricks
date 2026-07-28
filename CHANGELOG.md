@@ -24,6 +24,15 @@ and this project adheres to **Semantic Versioning** (https://semver.org/).
 - **Model-invocation error messages now name the offending callable** — Exception types are unchanged; only message text differs, and message text is not a stable API.
 - **`resolve_model` return values expanded** — It now returns the complete config-derived kwargs which are `{**predict_params, **hyperparameters}`. Previously, `resolve_model` returned `hyperparameters` only. Impacts only callers external to the package using `resolve_model` when inspecting hyperparameters, logging, or config diffing. Configs that do not set `predict_params` are unaffected since the returned dict only differs when `predict_params` set.
 
+### Removed
+
+- **BREAKING** — **`ModelConfig.model_n_jobs` removed** — The field was declared but read nowhere in `src/`; it never had the pass-through effect its documentation claimed. Model parallelism is configured through `hyperparameters` (fit-time) and `predict_params` (predict-time) under the model library's own parameter name. Configs still carrying the key continue to parse, but `cfg.model.model_n_jobs` now raises `AttributeError`.
+
+### Fixed
+
+- **Documentation: `BacktestResults.fitted_models`** — Was documented as containing serialized model bytes; it has never been populated and is always `None`. Model serialization is not implemented in V1. To obtain a fitted model today, call `invoke_model()` directly and take the third element of its return tuple.
+- **Documentation: package layout and dependencies** — `PACKAGE_MAINTAINER_SPEC.md` described modules that do not exist (`runner/serialization.py`, `backtesting/helpers.py`), used pre-rename filenames (`config.py`, `cv.py`), omitted four that do exist, listed `cloudpickle`/`joblib` as runner dependencies for an unimplemented serialization layer, and described `evaluation.py` as parallelized. Corrected throughout; unbuilt design is now stated in future tense or deferred to `spec_forecast_backtest_system_v1.md` Appendix A.
+
 ## [0.3.1] - 2026-05-08
 
 ### Fixed

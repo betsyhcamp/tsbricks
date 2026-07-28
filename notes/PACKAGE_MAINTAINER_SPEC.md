@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-`tsbricks` is an internal Python package providing time series forecasting tools for enterprise-scale workflows. It contains reusable forecasting building blocks (metrics, transforms, diagnostics, data I/O, utilities), shared orchestration primitives (transform pipeline execution, model invocation, serialization), and a configuration-driven backtesting system for cross-validated forecast evaluation.
+`tsbricks` is an internal Python package providing time series forecasting tools for enterprise-scale workflows. It contains reusable forecasting building blocks (metrics, transforms, diagnostics, data I/O, utilities), shared orchestration primitives (transform pipeline execution, model invocation, dynamic import), and a configuration-driven backtesting system for cross-validated forecast evaluation.
 
 The package is designed for use within Vertex AI pipelines, Vertex AI notebook instances, and local development environments. See `spec_forecast_backtest_system_v1.md` for the full behavioral specification of the backtesting system.
 
@@ -15,39 +15,42 @@ ______________________________________________________________________
 ```
 tsbricks/
 ├── __init__.py
+├── _testing/
+│   ├── __init__.py
+│   ├── dummy_models.py   # Fit-and-forecast and predict-only test doubles
+│   ├── dummy_metrics.py  # Metric callable test doubles
+│   └── param_resolvers.py  # Param-resolver test doubles
 ├── blocks/
 │   ├── __init__.py
-│   ├── metrics/          # Built-in metric callables (MAE, RMSE, RMSSE, MAPE, scaled bias, WAPE, WRMSSE)
-│   │   ├── __init__.py
-│   │   └── ...
+│   ├── metrics.py        # Built-in metric callables (MAE, RMSE, RMSSE, MAPE, scaled bias, WAPE, WRMSSE)
 │   ├── transforms/       # BaseTransform base class + built-in transforms (BoxCox, StandardScaler, Log, Log1p, Power, AddConstant, TradingDayNorm, WorkdayNormalize)
 │   │   ├── __init__.py
 │   │   └── ...
-│   ├── diagnostics/      # Model fit diagnostics (ACF, PACF)
-│   │   ├── __init__.py
-│   │   └── ...
-│   ├── dataio/           # Data loading and format utilities
-│   │   ├── __init__.py
-│   │   └── ...
+│   ├── diagnostics.py    # Model fit diagnostics (ACF, PACF)
+│   ├── dataio.py         # Data loading and format utilities
 │   ├── plots.py          # Seasonal, ACF, and PACF plots (Plotly + Matplotlib backends)
 │   ├── metadata.py       # Environment metadata collection (git hash, uv.lock info)
-│   └── utils/            # Shared utility functions
-│       ├── __init__.py
-│       └── ...
+│   └── utils.py          # Shared utility functions
 ├── runner/
 │   ├── __init__.py
 │   ├── transform_pipeline.py  # Transform chain application and inversion
 │   ├── model_invocation.py    # Callable loading, invocation, return tuple unpacking
-│   └── serialization.py       # Model serialization (pickle, cloudpickle, joblib, model_method)
+│   ├── utils.py               # dynamic_import
+│   └── warnings_utils.py      # capture_warnings, format_warnings
 ├── backtesting/
 │   ├── __init__.py       # Exports run_backtest
-│   ├── config.py         # Pydantic config models and validation
+│   ├── schema.py         # Pydantic config models and validation
 │   ├── engine.py         # run_backtest orchestration
-│   ├── cv.py             # Fold generation, expanding window splits
-│   ├── evaluation.py     # Parallelized metric computation
+│   ├── cross_validation.py  # Fold generation, expanding window splits
+│   ├── evaluation.py     # Metric computation
 │   ├── results.py        # BacktestResults, CVResults, TestResults dataclasses
-│   └── helpers.py        # Artifact extraction utilities for experiment tracking
+│   ├── temporal_agg.py   # Calendar-based temporal aggregation
+│   └── metric_agg.py     # Metric aggregation across folds and series
 ```
+
+`_testing/` ships in the wheel deliberately. The backtesting system resolves callables by dotted path, so its tests need real importable functions to point at; shipping the doubles is what lets the test suite exercise the genuine `dynamic_import` path rather than mocking resolution.
+
+`transforms/` is the only `blocks/` subpackage — it holds `BaseTransform` plus eight implementations. The others are single modules. A module may be promoted to a package if it grows the same way, but nothing currently requires it.
 
 ### 2.2 Design Intent
 
@@ -55,7 +58,7 @@ The package is organized into three top-level namespaces that reflect a layered 
 
 **`tsbricks.blocks`** contains stateless building blocks — metric callables, transform objects (all extending `BaseTransform`), diagnostic functions, data I/O utilities, and shared helpers. These components follow well-defined interfaces (the metric callable signature, the four-method transform interface defined by `BaseTransform`) and have no dependency on the runner's orchestration logic or the backtesting system's configuration model or output structures.
 
-**`tsbricks.runner`** contains shared orchestration primitives — transform chain execution (fit, transform, inverse transform), model callable invocation and return tuple unpacking, and model serialization. These primitives are consumed by `backtesting/` and will be consumed by a future `forecasting/` module. They depend on `blocks/` (e.g., transform objects) but have no dependency on backtest-specific or forecast-specific logic such as fold generation, metric evaluation, or result dataclasses.
+**`tsbricks.runner`** contains shared orchestration primitives — transform chain execution (fit, transform, inverse transform), model callable invocation and return tuple unpacking, and dynamic import. Model serialization is intended to live here in a future version; it is not implemented (see `spec_forecast_backtest_system_v1.md` Appendix A). These primitives are consumed by `backtesting/` and will be consumed by a future `forecasting/` module. They depend on `blocks/` (e.g., transform objects) but have no dependency on backtest-specific or forecast-specific logic such as fold generation, metric evaluation, or result dataclasses.
 
 **`tsbricks.backtesting`** is a use-case orchestrator that composes primitives from `blocks/` and `runner/` to run cross-validated backtests. It owns configuration parsing, fold generation, parallelized evaluation, error handling, and structured output construction. A future `tsbricks.forecasting` module will follow the same pattern — composing the same `runner/` primitives to produce forward-looking forecasts from the same YAML config.
 
@@ -67,7 +70,7 @@ The dependency direction is strictly: `backtesting/` → `runner/` → `blocks/`
 
 This is the single most important architectural constraint in the package. It ensures:
 
-- `blocks` modules remain usable independently of the runner and backtesting system. A consumer who only needs pooled RMSE or Box-Cox transforms should never transitively depend on Pydantic config models, multiprocessing orchestration, or model serialization logic.
+- `blocks` modules remain usable independently of the runner and backtesting system. A consumer who only needs pooled RMSE or Box-Cox transforms should never transitively depend on Pydantic config models, nor on the multiprocessing orchestration or model serialization logic that a future version would add to the upper layers.
 - `runner` modules are reusable by any use-case orchestrator (backtesting, forecasting) without circular dependencies.
 - The package can be mechanically split into separate packages (`tsbricks-blocks`, `tsbricks-runner`, `tsbricks-backtesting`) in the future without redesigning the dependency graph (see section 2.5).
 - The interfaces between the namespaces are explicit and testable. The callable contracts (metric signatures, transform four-method interface) defined in the backtesting spec are the API boundary.
@@ -111,7 +114,7 @@ The backtesting system, runner, and blocks modules are shipped as a single packa
 The single-package decision should be revisited if any of the following conditions emerge:
 
 - **Divergent ownership.** A separate team takes responsibility for either the backtesting engine or the blocks forecasting utilities. Package boundaries should follow team boundaries.
-- **Divergent consumer bases.** Other teams at the company adopt `tsbricks.blocks` modules (metrics, transforms, diagnostics) for their own evaluation or pipeline code without using the backtesting system, and the backtesting system's dependency footprint (Pydantic, multiprocessing patterns, serialization libraries) causes them friction.
+- **Divergent consumer bases.** Other teams at the company adopt `tsbricks.blocks` modules (metrics, transforms, diagnostics) for their own evaluation or pipeline code without using the backtesting system, and the backtesting system's dependency footprint — Pydantic today, plus the multiprocessing and serialization libraries a future version would add — causes them friction.
 - **Divergent release cadences.** The backtesting system requires frequent releases (e.g., weekly) while blocks modules are stable, and consumers of blocks are forced into unnecessary upgrades.
 - **Dependency weight becomes a problem.** The backtesting system accumulates heavy dependencies that are inappropriate for lightweight consumers of blocks utilities.
 
@@ -131,9 +134,9 @@ Dependencies required by `tsbricks.blocks`:
 
 ### 3.2 Runner Dependencies
 
-Additional dependencies required by `tsbricks.runner`:
+None. `tsbricks.runner` requires nothing beyond what `tsbricks.blocks` already depends on.
 
-- `cloudpickle` / `joblib` — model serialization (optional, depending on user config)
+A future serialization layer would add `cloudpickle` / `joblib`; neither is imported anywhere in `src/` today.
 
 ### 3.3 Backtesting Dependencies
 
@@ -279,6 +282,16 @@ ______________________________________________________________________
 
 The package follows semantic versioning. Because `blocks`, `runner`, and `backtesting` are co-versioned in a single package, a breaking change in any namespace constitutes a major version bump. This is acceptable at the current scale; if the asymmetry between blocks stability and backtesting/runner churn becomes a problem, it is a signal to revisit the split decision (see section 2.5).
 
+**Pre-1.0**, breaking changes ship in minor versions, per semver's 0.x provision. The rule above applies after 1.0. This is why 0.4.0 carries several breaking changes without a major bump.
+
+### 5.1 CHANGELOG Conventions
+
+`CHANGELOG.md` follows Keep a Changelog 1.1.0, which defines six section types — Added, Changed, Deprecated, Removed, Fixed, Security — and has no Breaking category.
+
+Breaking changes are therefore marked with an inline **`**BREAKING** — `** prefix at the start of the entry, within whatever section it belongs to. This keeps the format declaration honest, keeps each entry beside the context that explains it, and avoids forcing a breaking item to be either duplicated or separated from its kind.
+
+An entry is breaking if it can affect a configuration or call site that existed **before** the release. A change that can only affect code adopting a field introduced in the same release is not breaking. Verify rather than assume: during the 0.4.0 work, a `horizon`-key guard looked non-breaking on the grounds that such configs already failed, until a callable shaped `def f(train_df, h, **kwargs)` turned out to have worked fine.
+
 ______________________________________________________________________
 
 ## 6. YAML Config Import Paths
@@ -312,10 +325,12 @@ model:
 # User-provided custom metric
 - callable: my_project.metrics.custom_metric
 
-# User-provided custom serializer
-serialization:
-  method: my_project.serializers.custom_save
+# User-provided predict-only callable
+model:
+  predict_callable: my_project.models.auto_arima_predict
 ```
+
+`ModelConfig.serialization` accepts a `method:` import path, but **nothing consumes it** — serialization is not implemented (see `spec_forecast_backtest_system_v1.md` Appendix A). A config supplying it parses and is then ignored.
 
 The dynamic import mechanism in `tsbricks.runner` resolves any valid Python import path. Built-in and user-provided callables are treated identically at runtime.
 

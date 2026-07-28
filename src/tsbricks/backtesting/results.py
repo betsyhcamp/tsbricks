@@ -38,7 +38,12 @@ class CVResults:
         metric_instability_flags: DataFrame flagging numerically unstable
             metric computations.
         metric_groups: Group name to grouped-metric DataFrame.
-        fitted_models: Fold ID to serialized model bytes.
+        fitted_models: Fold ID to serialized model bytes. Not populated
+            in V1 -- always ``None``. Reserved for the deferred
+            serialization design (see spec_forecast_backtest_system_v1.md,
+            Appendix A). To obtain a fitted model today, call
+            ``invoke_model()`` directly and take the third element of its
+            return tuple.
     """
 
     # Always present
@@ -54,6 +59,8 @@ class CVResults:
     transform_params: dict[str, dict[str, dict]] | None = None
     metric_instability_flags: pd.DataFrame | None = None
     metric_groups: dict[str, pd.DataFrame] | None = None
+
+    # Out of scope for V1 -- declared but never populated
     fitted_models: dict[str, bytes] | None = None
 
 

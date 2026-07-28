@@ -280,7 +280,6 @@ class ModelConfig(BaseModel):
     hyperparameters: dict[str, Any] | None = None
     predict_callable: str | None = None
     predict_params: dict[str, Any] | None = None
-    model_n_jobs: int | None = None
 
     # Out of scope for V1
     serialization: dict[str, Any] | None = None
