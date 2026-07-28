@@ -694,7 +694,7 @@ The user can compute residuals from fitted values in whichever convention they p
 
 ```yaml
 model:
-  callable: my_project.models.my_arima_model
+  fit_predict_callable: my_project.models.my_arima_model
   hyperparameters:
     order: [1, 1, 1]
     seasonal_order: [1, 1, 1, 12]
@@ -709,12 +709,12 @@ model:
 
 **What `run_backtest()` consumes, and what it does not:**
 
-| Field              | Consumed by `run_backtest()` | Why                                                                       |
-| ------------------ | ---------------------------- | ------------------------------------------------------------------------- |
-| `callable`         | yes                          | the fit-and-forecast callable invoked once per fold                       |
-| `hyperparameters`  | yes                          | fit-time kwargs, forwarded to `callable`                                  |
-| `predict_params`   | **yes**                      | `callable` forecasts as well as fits, so it needs predict-time kwargs too |
-| `predict_callable` | **no**                       | `run_backtest()` fits every fold; it has no predict-only step             |
+| Field                  | Consumed by `run_backtest()` | Why                                                                                   |
+| ---------------------- | ---------------------------- | ------------------------------------------------------------------------------------- |
+| `fit_predict_callable` | yes                          | the fit-and-forecast callable invoked once per fold                                   |
+| `hyperparameters`      | yes                          | fit-time kwargs, forwarded to `fit_predict_callable`                                  |
+| `predict_params`       | **yes**                      | `fit_predict_callable` forecasts as well as fits, so it needs predict-time kwargs too |
+| `predict_callable`     | **no**                       | `run_backtest()` fits every fold; it has no predict-only step                         |
 
 `predict_callable` exists for the predict-only entrypoint `invoke_predict()`, which forecasts from an already-fitted model without refitting (see section 7.6). Backtesting never reaches for it — the path is not resolved, so a backtest runs normally even if `predict_callable` names a module that cannot be imported.
 
@@ -984,7 +984,7 @@ transforms:
 
 # --- Model ---
 model:
-  callable: my_project.models.auto_arima_forecast
+  fit_predict_callable: my_project.models.auto_arima_forecast
   hyperparameters:
     order: [1, 1, 1]
     seasonal_order: [1, 1, 1, 12]
@@ -992,10 +992,11 @@ model:
   # predict-only step. Used by invoke_predict() to forecast from an
   # already-fitted model without refitting (see section 7.6).
   predict_callable: my_project.models.auto_arima_predict
-  # Optional. Consumed by run_backtest(), because model.callable forecasts as
-  # well as fits, AND by invoke_predict(). Declared once so backtesting and
-  # serving emit the same product. On overlap with hyperparameters,
-  # hyperparameters wins and config parsing warns (see section 7.5).
+  # Optional. Consumed by run_backtest(), because model.fit_predict_callable
+  # forecasts as well as fits, AND by invoke_predict(). Declared once so
+  # backtesting and serving emit the same product. On overlap with
+  # hyperparameters, hyperparameters wins and config parsing warns
+  # (see section 7.5).
   predict_params:
     level: [80, 95]
   serialization:
@@ -1349,7 +1350,7 @@ All methods require the model callable to return the fitted model object as the 
 ```yaml
 # Using Nixtla's built-in .save() method
 model:
-  callable: my_project.models.my_statsforecast_model
+  fit_predict_callable: my_project.models.my_statsforecast_model
   hyperparameters: {}
   serialization:
     enabled: true
@@ -1358,7 +1359,7 @@ model:
 
 # Using joblib
 model:
-  callable: my_project.models.my_model
+  fit_predict_callable: my_project.models.my_model
   hyperparameters: {}
   serialization:
     enabled: true
@@ -1366,7 +1367,7 @@ model:
 
 # Using a custom serialization callable
 model:
-  callable: my_project.models.my_model
+  fit_predict_callable: my_project.models.my_model
   hyperparameters: {}
   serialization:
     enabled: true

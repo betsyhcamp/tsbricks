@@ -313,7 +313,7 @@ The backtesting system's YAML config references callables by import path. There 
 ```yaml
 # User-provided model
 model:
-  callable: my_project.models.auto_arima_forecast
+  fit_predict_callable: my_project.models.auto_arima_forecast
   hyperparameters:
     season_length: 12
   # Optional: how to forecast from an already-fitted model, for invoke_predict.
